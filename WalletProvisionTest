@@ -1,0 +1,70 @@
+package com.framework.tests;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.framework.base.BaseTest;
+import com.framework.utils.DataProviderUtils;
+import io.restassured.response.Response;
+import org.testng.Assert;
+import org.testng.annotations.Test;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static io.restassured.RestAssured.given;
+
+/**
+ * Sample test demonstrating data-driven flow.
+ * Each row in Excel should contain columns:
+ * TestName, Username, Password, CardNumber, AccountType, WalletType, ExpectedStatus
+ */
+public class WalletProvisionTest extends BaseTest {
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    @Test(dataProvider = "excelData", dataProviderClass = DataProviderUtils.class)
+    public void walletProvisionTest(Map<String, String> data) throws Exception {
+        String testName = data.getOrDefault("TestName", "Unnamed");
+        System.out.println("Running: " + testName);
+
+        // Build request body map
+        Map<String, Object> stdInputParms = new HashMap<>();
+        stdInputParms.put("interfaceInd", data.getOrDefault("interfaceInd", "MOB"));
+        stdInputParms.put("debitCardNumber", data.get("CardNumber"));
+        stdInputParms.put("acctType", data.get("AccountType"));
+        stdInputParms.put("userId", data.get("UserId"));
+
+        Map<String, Object> inAppProv = new HashMap<>();
+        inAppProv.put("requestNum", data.getOrDefault("requestNum", "20161222081244"));
+        inAppProv.put("requestProvWallet", data.get("WalletType"));
+        inAppProv.put("requestProvDateTimeStamp", data.getOrDefault("requestProvDateTimeStamp", "20161222081246"));
+
+        Map<String, Object> requestMessage = new HashMap<>();
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("stdInputParms", stdInputParms);
+        requestBody.put("inAppProv", inAppProv);
+        requestMessage.put("requestBody", requestBody);
+        Map<String, Object> root = new HashMap<>();
+        root.put("requestMessage", requestMessage);
+
+        String body = mapper.writeValueAsString(root);
+
+        // credentials come from Excel (CryptoUtils already decrypted them while reading)
+        String username = data.get("Username");
+        String password = data.get("Password");
+
+        Response resp = given()
+                .auth().preemptive().basic(username, password)
+                .header("Content-Type", "application/json")
+                .body(body)
+                .post(); // RestAssured.baseURI set in BaseTest
+
+        System.out.println("Response for " + testName + " : " + resp.asPrettyString());
+        int expectedStatus = Integer.parseInt(data.getOrDefault("ExpectedStatus", "200"));
+        try {
+            Assert.assertEquals(resp.getStatusCode(), expectedStatus, "Status code mismatch");
+        } catch (AssertionError ae) {
+            // you can add more logging/attach response to report here
+            throw ae;
+        }
+    }
+}
