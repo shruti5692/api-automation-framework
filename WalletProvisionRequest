@@ -1,0 +1,43 @@
+package com.framework.models;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.util.Map;
+
+/**
+ * A small builder-style POJO that matches the JSON structure you showed.
+ * requestMessage -> requestBody -> stdInputParms & inAppProv
+ */
+public class WalletProvisionRequest {
+
+    @JsonProperty("requestMessage")
+    private RequestMessage requestMessage = new RequestMessage();
+
+    public static class RequestMessage {
+        @JsonProperty("requestBody")
+        private RequestBody requestBody = new RequestBody();
+    }
+
+    public static class RequestBody {
+        @JsonProperty("stdInputParms")
+        private Map<String, Object> stdInputParms;
+        @JsonProperty("inAppProv")
+        private Map<String, Object> inAppProv;
+    }
+
+    // builder helpers
+    public WalletProvisionRequest withStdInputParms(Map<String, Object> stdInputParms) {
+        this.requestMessage.requestBody.stdInputParms = stdInputParms;
+        return this;
+    }
+
+    public WalletProvisionRequest withInAppProv(Map<String, Object> inAppProv) {
+        this.requestMessage.requestBody.inAppProv = inAppProv;
+        return this;
+    }
+
+    // getter required by Jackson during serialization
+    public RequestMessage getRequestMessage() {
+        return requestMessage;
+    }
+}
