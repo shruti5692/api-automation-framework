@@ -1,0 +1,64 @@
+package com.framework.utils;
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
+import java.io.FileInputStream;
+import java.util.*;
+
+/**
+ * Minimal Excel reader: returns list of rows as map <columnName, cellStringValue>
+ */
+public class ExcelUtils {
+
+    public static List<Map<String, String>> readSheet(String excelPath, String sheetName) throws Exception {
+        List<Map<String, String>> rows = new ArrayList<>();
+
+        try (FileInputStream fis = new FileInputStream(excelPath);
+             Workbook workbook = new XSSFWorkbook(fis)) {
+
+            Sheet sheet = workbook.getSheet(sheetName);
+            if (sheet == null) throw new IllegalArgumentException("Sheet not found: " + sheetName);
+
+            Iterator<Row> rowIterator = sheet.iterator();
+            if (!rowIterator.hasNext()) return rows; // empty sheet
+
+            // header
+            Row header = rowIterator.next();
+            List<String> headers = new ArrayList<>();
+            for (Cell c : header) {
+                c.setCellType(CellType.STRING);
+                headers.add(c.getStringCellValue());
+            }
+
+            while (rowIterator.hasNext()) {
+                Row r = rowIterator.next();
+                Map<String, String> map = new LinkedHashMap<>();
+                for (int i = 0; i < headers.size(); i++) {
+                    Cell c = r.getCell(i);
+                    String value = "";
+                    if (c != null) {
+                        if (c.getCellType() == CellType.NUMERIC) {
+                            // convert numeric to string without scientific notation
+                            if (DateUtil.isCellDateFormatted(c)) {
+                                value = String.valueOf(c.getDateCellValue().getTime()); // or format date
+                            } else {
+                                value = String.valueOf((long) c.getNumericCellValue());
+                            }
+                        } else {
+                            c.setCellType(CellType.STRING);
+                            value = c.getStringCellValue();
+                        }
+                    }
+                    // decrypt if ENC(...)
+                    value = CryptoUtils.decryptIfEncrypted(value);
+                    map.put(headers.get(i), value);
+                }
+                // skip empty rows (optionally)
+                boolean empty = map.values().stream().allMatch(v -> v == null || v.trim().isEmpty());
+                if (!empty) rows.add(map);
+            }
+        }
+        return rows;
+    }
+}
