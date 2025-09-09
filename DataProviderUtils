@@ -1,0 +1,29 @@
+package com.framework.utils;
+
+import com.framework.config.ConfigManager;
+import org.testng.annotations.DataProvider;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Provides TestNG DataProviders backed by Excel (reads sheet name from method param).
+ */
+public class DataProviderUtils {
+
+    /**
+     * Generic data provider that reads the sheet specified in application.properties's 'excel.sheet' or accepts default.
+     * Example usage: @Test(dataProvider = "excelData", dataProviderClass = DataProviderUtils.class)
+     */
+    @DataProvider(name = "excelData")
+    public static Object[][] excelDataProvider() throws Exception {
+        String excelPath = ConfigManager.get("excel.path");
+        String sheetName = ConfigManager.get("excel.sheet");
+        if (sheetName == null || sheetName.isEmpty()) sheetName = "WalletProvision";
+
+        List<Map<String, String>> rows = ExcelUtils.readSheet(excelPath, sheetName);
+        Object[][] data = new Object[rows.size()][1];
+        for (int i = 0; i < rows.size(); i++) data[i][0] = rows.get(i);
+        return data;
+    }
+}
