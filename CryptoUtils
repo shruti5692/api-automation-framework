@@ -1,0 +1,51 @@
+package com.framework.utils;
+
+import com.framework.config.ConfigManager;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
+import java.util.Base64;
+
+/**
+ * AES encryption/decryption utility.
+ * IMPORTANT: For demo simplicity we're using AES/ECB/PKCS5Padding with a 16-byte key.
+ * In production use an IV and stronger key storage mechanisms.
+ */
+public class CryptoUtils {
+
+    private static final String ALGORITHM = "AES/ECB/PKCS5Padding";
+
+    private static SecretKeySpec getSecretKey() throws Exception {
+        String key = ConfigManager.getEncryptionKey(); // must be 16 chars for AES-128
+        if (key.length() != 16) {
+            throw new IllegalArgumentException("Encryption key must be 16 characters (AES-128) in this simple impl.");
+        }
+        return new SecretKeySpec(key.getBytes(), "AES");
+    }
+
+    public static String decryptIfEncrypted(String value) throws Exception {
+        if (value == null) return null;
+        value = value.trim();
+        if (value.startsWith("ENC(") && value.endsWith(")")) {
+            String encrypted = value.substring(4, value.length() - 1);
+            return decrypt(encrypted);
+        } else {
+            return value;
+        }
+    }
+
+    public static String encrypt(String plain) throws Exception {
+        Cipher cipher = Cipher.getInstance(ALGORITHM);
+        cipher.init(Cipher.ENCRYPT_MODE, getSecretKey());
+        byte[] enc = cipher.doFinal(plain.getBytes());
+        return Base64.getEncoder().encodeToString(enc);
+    }
+
+    public static String decrypt(String cipherText) throws Exception {
+        Cipher cipher = Cipher.getInstance(ALGORITHM);
+        cipher.init(Cipher.DECRYPT_MODE, getSecretKey());
+        byte[] decoded = Base64.getDecoder().decode(cipherText);
+        byte[] dec = cipher.doFinal(decoded);
+        return new String(dec);
+    }
+}
