@@ -1,0 +1,36 @@
+Hi Parmeshwar,
+
+I want to share my understanding of the API Testing Automation Framework so we are aligned before I proceed further:
+
+Objective: Build a reusable, data-driven framework for API testing.
+
+Requirements:
+
+Data-driven using Excel for test cases and expected results.
+
+Support Basic Authentication (username/password).
+
+Handle sensitive data through encryption/decryption.
+
+Configurable setup for base URLs, endpoints, and file paths.
+
+Reporting of execution status (pass/fail).
+
+
+Tech Stack: Java, TestNG, RestAssured, Apache POI, AES encryption.
+
+Flow:
+Excel (test data + encrypted fields) → Framework utilities (config, crypto, data provider) → API execution via RestAssured → Response validation → Report generation.
+
+Proposed Excel Structure:
+
+
+TestName	Username	Password	Endpoint	RequestBody	ExpectedStatus	ExpectedMessage
+
+TC01	ENC(...)	ENC(...)	/wallet-provisions	{…json body…}	200	Success
+
+
+Please confirm if this matches the expectations so that I can move forward accordingly.
+
+Thanks & Regards,
+Shruti Raikar
