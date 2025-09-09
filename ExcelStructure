@@ -1,0 +1,4 @@
+TestName	Endpoint	Method	Username*	Password*	Headers	RequestBody (JSON)*	ExpectedStatus	ExpectedResponse (JSON)
+
+TC01	/wallet-provisions	POST	ENC(user123)	ENC(pass123)	{"Content-Type":"application/json"}	{"debitCardNumber":"ENC(44624207665704)","acctType":"A","wallet":"APPLEPAY"}	200	{"status":"Success"}
+TC02	/wallet-provisions	POST	ENC(user456)	ENC(pass456)	{"Content-Type":"application/json"}	{"debitCardNumber":"ENC(12345678901234)","acctType":"B","wallet":"GOOGLEPAY"}	400	{"errorCode":"INVALID_ACCOUNT"}
