@@ -1,24 +1,11 @@
 package com.framework.base;
 
 import com.framework.config.ConfigManager;
-import io.restassured.RestAssured;
 import org.testng.annotations.BeforeClass;
 
-/**
- * Base test: loads config and sets RestAssured base URI.
- */
 public class BaseTest {
-
     @BeforeClass
-    public void baseSetup() throws Exception {
-        // Load properties
+    public void setup() throws Exception {
         ConfigManager.load("src/test/resources/application.properties");
-
-        String baseUrl = ConfigManager.get("base.url");
-        if (baseUrl == null || baseUrl.isEmpty()) {
-            throw new IllegalStateException("base.url not configured in application.properties");
-        }
-        RestAssured.baseURI = baseUrl;
-        // Optional global settings (timeouts) can be added here.
     }
 }
