@@ -1,0 +1,53 @@
+package com.framework.utils;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.*;
+
+import java.util.Iterator;
+import java.util.Map;
+
+public class JsonUtils {
+    private static final ObjectMapper mapper = new ObjectMapper();
+
+    /**
+     * Given a JSON string, parse it and replace any string values that are ENC(...) with decrypted values.
+     * Returns the new JSON string.
+     */
+    public static String decryptEmbeddedValues(String jsonString) throws Exception {
+        if (jsonString == null || jsonString.trim().isEmpty()) return jsonString;
+        JsonNode root = mapper.readTree(jsonString);
+        JsonNode processed = processNode(root);
+        return mapper.writeValueAsString(processed);
+    }
+
+    private static JsonNode processNode(JsonNode node) throws Exception {
+        if (node.isObject()) {
+            ObjectNode obj = (ObjectNode) node;
+            Iterator<Map.Entry<String, JsonNode>> fields = obj.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                JsonNode child = entry.getValue();
+                JsonNode processedChild = processNode(child);
+                obj.set(entry.getKey(), processedChild);
+            }
+            return obj;
+        } else if (node.isArray()) {
+            ArrayNode arr = (ArrayNode) node;
+            for (int i = 0; i < arr.size(); i++) {
+                arr.set(i, processNode(arr.get(i)));
+            }
+            return arr;
+        } else if (node.isTextual()) {
+            String text = node.asText();
+            if (text.startsWith("ENC(") && text.endsWith(")")) {
+                String decrypted = CryptoUtils.resolve(text);
+                return new TextNode(decrypted);
+            } else {
+                return node;
+            }
+        } else {
+            return node;
+        }
+    }
+}
