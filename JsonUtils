@@ -7,13 +7,13 @@ import com.fasterxml.jackson.databind.node.*;
 import java.util.Iterator;
 import java.util.Map;
 
+/**
+ * Walks a JSON structure and decrypts any textual value of form ENC(<base64>).
+ * This keeps RequestBody JSON editable in Excel while allowing encrypted placeholders.
+ */
 public class JsonUtils {
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    /**
-     * Given a JSON string, parse it and replace any string values that are ENC(...) with decrypted values.
-     * Returns the new JSON string.
-     */
     public static String decryptEmbeddedValues(String jsonString) throws Exception {
         if (jsonString == null || jsonString.trim().isEmpty()) return jsonString;
         JsonNode root = mapper.readTree(jsonString);
@@ -26,10 +26,8 @@ public class JsonUtils {
             ObjectNode obj = (ObjectNode) node;
             Iterator<Map.Entry<String, JsonNode>> fields = obj.fields();
             while (fields.hasNext()) {
-                Map.Entry<String, JsonNode> entry = fields.next();
-                JsonNode child = entry.getValue();
-                JsonNode processedChild = processNode(child);
-                obj.set(entry.getKey(), processedChild);
+                Map.Entry<String, JsonNode> e = fields.next();
+                obj.set(e.getKey(), processNode(e.getValue()));
             }
             return obj;
         } else if (node.isArray()) {
