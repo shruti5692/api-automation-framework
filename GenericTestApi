@@ -1,0 +1,103 @@
+package com.framework.tests;
+
+import com.framework.base.BaseTest;
+import com.framework.config.ConfigManager;
+import com.framework.core.ApiClient;
+import com.framework.utils.ExcelUtils;
+import com.framework.utils.JsonUtils;
+import com.framework.utils.DataProviderUtils;
+import com.framework.utils.CryptoUtils;
+import com.jayway.jsonpath.JsonPath;
+import io.restassured.response.Response;
+import org.testng.Assert;
+import org.testng.annotations.Test;
+
+import java.util.*;
+
+public class GenericApiTest extends BaseTest {
+
+    @Test(dataProvider = "excelData", dataProviderClass = DataProviderUtils.class)
+    public void runTest(Map<String, String> row) throws Exception {
+        String testCaseId = row.getOrDefault("TestCaseID", UUID.randomUUID().toString());
+        String endpoint = row.getOrDefault("Endpoint", "").trim();
+        String method = row.getOrDefault("Method", "GET").trim();
+        String headersRaw = row.getOrDefault("Headers", "");
+        String requestBodyRaw = row.getOrDefault("RequestBody (JSON)", row.getOrDefault("RequestBody", ""));
+        String usernameEnc = row.getOrDefault("Username", "");
+        String passwordEnc = row.getOrDefault("Password", "");
+        String expectedStatusStr = row.getOrDefault("ExpectedStatus", "200").trim();
+        String expectedResponseCheck = row.getOrDefault("ExpectedResponseCheck", "").trim();
+
+        String username = (usernameEnc == null || usernameEnc.isEmpty()) ? null : CryptoUtils.resolve(usernameEnc);
+        String password = (passwordEnc == null || passwordEnc.isEmpty()) ? null : CryptoUtils.resolve(passwordEnc);
+
+        // Build header map
+        Map<String, String> headers = parseHeaders(headersRaw);
+        // decrypt embedded ENC(...) inside JSON request body
+        String processedBody = requestBodyRaw;
+        if (processedBody != null && !processedBody.trim().isEmpty()) {
+            processedBody = JsonUtils.decryptEmbeddedValues(processedBody);
+        }
+
+        String baseUrl = ConfigManager.get("base.url");
+        String fullUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length()-1) + endpoint :
+                baseUrl + endpoint;
+
+        Response resp = ApiClient.send(fullUrl, method, headers, processedBody, username, password);
+
+        int expectedStatus = Integer.parseInt(expectedStatusStr);
+        int actualStatus = resp.getStatusCode();
+        boolean pass = (expectedStatus == actualStatus);
+        String failReason = "";
+
+        if (!pass) {
+            failReason = "Status mismatch expected=" + expectedStatus + " actual=" + actualStatus;
+        } else if (expectedResponseCheck != null && !expectedResponseCheck.isEmpty()) {
+            // expectedResponseCheck can be either a JSONPath:value or a substring
+            boolean checkOk = false;
+            String respStr = resp.asString();
+            if (expectedResponseCheck.contains(":")) {
+                // format keyPath:value e.g. $.data.id:123 or requestProvWallet:APPLEPAY (non-jsonpath fallback)
+                String[] arr = expectedResponseCheck.split(":", 2);
+                String left = arr[0].trim();
+                String right = arr[1].trim();
+                try {
+                    // try JSONPath first
+                    Object val = JsonPath.read(respStr, left);
+                    if (val != null && right.equals(String.valueOf(val))) checkOk = true;
+                } catch (Exception e) {
+                    // fallback to simple contains check
+                    if (respStr.contains(expectedResponseCheck)) checkOk = true;
+                }
+            } else {
+                if (resp.asString().contains(expectedResponseCheck)) checkOk = true;
+            }
+            if (!checkOk) {
+                pass = false;
+                failReason = "ExpectedResponseCheck failed: " + expectedResponseCheck + " response: " + resp.asString();
+            }
+        }
+
+        // Write back to excel
+        String resultText = pass ? "Pass" : "Fail - " + failReason;
+        ExcelUtils.writeResult(ConfigManager.get("excel.path"), ConfigManager.get("excel.sheet"), testCaseId, resultText);
+
+        // Assert testng
+        Assert.assertTrue(pass, failReason);
+    }
+
+    private Map<String, String> parseHeaders(String headersRaw) {
+        Map<String, String> map = new HashMap<>();
+        if (headersRaw == null || headersRaw.trim().isEmpty()) return map;
+        // headers format example: "Content-Type:application/json; Accept:application/json"
+        String[] pairs = headersRaw.split(";");
+        for (String pair : pairs) {
+            if (pair == null || pair.trim().isEmpty()) continue;
+            String[] kv = pair.split(":", 2);
+            if (kv.length == 2) {
+                map.put(kv[0].trim(), kv[1].trim());
+            }
+        }
+        return map;
+    }
+}
