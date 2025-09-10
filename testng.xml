@@ -1,8 +1,8 @@
 <!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd" >
-<suite name="API Automation Suite">
-  <test name="Wallet Provision Tests">
+<suite name="API Suite">
+  <test name="Generic API Tests">
     <classes>
-      <class name="com.framework.tests.WalletProvisionTest"/>
+      <class name="com.framework.tests.GenericApiTest"/>
     </classes>
   </test>
 </suite>
