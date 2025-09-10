@@ -3,35 +3,39 @@ package com.framework.tools;
 import com.framework.config.ConfigManager;
 import com.framework.utils.CryptoUtils;
 
-import javax.crypto.KeyGenerator;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Base64;
 
+/**
+ * Small CLI tool:
+ *  - generate-key         => creates src/test/resources/encryption.key (Base64 key)
+ *  - encrypt <value>      => prints ENC(<base64>) to paste into Excel
+ *
+ * Usage (from IDE): run main with args.
+ */
 public class EncryptTool {
-
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.out.println("Usage: java EncryptTool generate-key | encrypt <value>");
+            System.out.println("Usage: generate-key | encrypt <value>");
             return;
         }
         if ("generate-key".equalsIgnoreCase(args[0])) {
-            KeyGenerator kg = KeyGenerator.getInstance("AES");
-            kg.init(128);
-            byte[] key = kg.generateKey().getEncoded();
-            String base64 = Base64.getEncoder().encodeToString(key);
-            // write to default path used in application.properties OR print to console
+            String base64Key = CryptoUtils.generateBase64Key();
             String path = "src/test/resources/encryption.key";
             Files.createDirectories(Paths.get("src/test/resources"));
-            Files.write(Paths.get(path), base64.getBytes());
-            System.out.println("Key generated and saved to " + path);
+            Files.write(Paths.get(path), base64Key.getBytes());
+            System.out.println("Generated key at: " + path);
+            System.out.println("Key (Base64): " + base64Key);
         } else if ("encrypt".equalsIgnoreCase(args[0]) && args.length == 2) {
-            // make sure ConfigManager loaded so CryptoUtils can read key
-            ConfigManager.load("src/test/resources/application.properties");
+            // ensure config is loaded so CryptoUtils can read key (ConfigManager needed only if key path is in properties)
+            try {
+                ConfigManager.load("src/test/resources/application.properties");
+            } catch (Exception ignored) {}
             String enc = CryptoUtils.encrypt(args[1]);
-            System.out.println("Put in Excel as: ENC(" + enc + ")");
+            System.out.println("Paste into Excel as: ENC(" + enc + ")");
         } else {
-            System.out.println("Unknown command");
+            System.out.println("Unknown command. Usage: generate-key | encrypt <value>");
         }
     }
 }
