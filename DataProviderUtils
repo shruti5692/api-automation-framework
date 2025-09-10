@@ -6,6 +6,11 @@ import org.testng.annotations.DataProvider;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * TestNG DataProvider that reads Excel and returns rows as single Map param.
+ * Tests should declare: @Test(dataProvider = "excelData", dataProviderClass = DataProviderUtils.class)
+ * and accept Map<String,String> row parameter.
+ */
 public class DataProviderUtils {
 
     @DataProvider(name = "excelData")
