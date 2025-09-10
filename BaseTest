@@ -3,9 +3,14 @@ package com.framework.base;
 import com.framework.config.ConfigManager;
 import org.testng.annotations.BeforeClass;
 
+/**
+ * Minimal base test placed in main so it is reusable across test modules.
+ * It loads config properties at test startup. Tests should extend this or call ConfigManager directly.
+ */
 public class BaseTest {
+
     @BeforeClass
-    public void setup() throws Exception {
+    public void baseSetup() throws Exception {
         ConfigManager.load("src/test/resources/application.properties");
     }
 }
