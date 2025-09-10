@@ -4,48 +4,53 @@ import com.framework.config.ConfigManager;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Base64;
 
 /**
- * AES encryption/decryption utility.
- * IMPORTANT: For demo simplicity we're using AES/ECB/PKCS5Padding with a 16-byte key.
- * In production use an IV and stronger key storage mechanisms.
+ * AES decrypt/encrypt using key stored as Base64 in encryption.key.
+ * This uses AES/ECB/PKCS5Padding for simplicity (for PoC). Prefer AES-GCM in production.
  */
 public class CryptoUtils {
+    private static final String ALGO = "AES/ECB/PKCS5Padding";
+    private static SecretKeySpec keySpec;
 
-    private static final String ALGORITHM = "AES/ECB/PKCS5Padding";
-
-    private static SecretKeySpec getSecretKey() throws Exception {
-        String key = ConfigManager.getEncryptionKey(); // must be 16 chars for AES-128
-        if (key.length() != 16) {
-            throw new IllegalArgumentException("Encryption key must be 16 characters (AES-128) in this simple impl.");
-        }
-        return new SecretKeySpec(key.getBytes(), "AES");
-    }
-
-    public static String decryptIfEncrypted(String value) throws Exception {
-        if (value == null) return null;
-        value = value.trim();
-        if (value.startsWith("ENC(") && value.endsWith(")")) {
-            String encrypted = value.substring(4, value.length() - 1);
-            return decrypt(encrypted);
-        } else {
-            return value;
-        }
+    private static void ensureKeyLoaded() throws Exception {
+        if (keySpec != null) return;
+        String keyPath = ConfigManager.getEncryptionKeyFilePath();
+        if (keyPath == null) throw new IllegalStateException("encryption.key not configured");
+        byte[] keyBytes = Files.readAllBytes(Paths.get(keyPath));
+        String base64 = new String(keyBytes).trim();
+        byte[] decoded = Base64.getDecoder().decode(base64);
+        keySpec = new SecretKeySpec(decoded, "AES");
     }
 
     public static String encrypt(String plain) throws Exception {
-        Cipher cipher = Cipher.getInstance(ALGORITHM);
-        cipher.init(Cipher.ENCRYPT_MODE, getSecretKey());
+        ensureKeyLoaded();
+        Cipher cipher = Cipher.getInstance(ALGO);
+        cipher.init(Cipher.ENCRYPT_MODE, keySpec);
         byte[] enc = cipher.doFinal(plain.getBytes());
         return Base64.getEncoder().encodeToString(enc);
     }
 
-    public static String decrypt(String cipherText) throws Exception {
-        Cipher cipher = Cipher.getInstance(ALGORITHM);
-        cipher.init(Cipher.DECRYPT_MODE, getSecretKey());
-        byte[] decoded = Base64.getDecoder().decode(cipherText);
+    public static String decrypt(String encBase64) throws Exception {
+        ensureKeyLoaded();
+        Cipher cipher = Cipher.getInstance(ALGO);
+        cipher.init(Cipher.DECRYPT_MODE, keySpec);
+        byte[] decoded = Base64.getDecoder().decode(encBase64);
         byte[] dec = cipher.doFinal(decoded);
         return new String(dec);
+    }
+
+    /** Decrypts if value is of form ENC(xxx) else returns value */
+    public static String resolve(String value) throws Exception {
+        if (value == null) return null;
+        value = value.trim();
+        if (value.startsWith("ENC(") && value.endsWith(")")) {
+            String payload = value.substring(4, value.length() - 1);
+            return decrypt(payload);
+        }
+        return value;
     }
 }
