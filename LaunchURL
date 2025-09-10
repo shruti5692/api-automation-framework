@@ -1,0 +1,21 @@
+import io.github.bonigarcia.wdm.WebDriverManager;
+import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.chrome.ChromeDriver;
+
+public class LaunchURL {
+    public static void main(String[] args) {
+        // Setup ChromeDriver automatically
+        WebDriverManager.chromedriver().setup();
+
+        // Launch Chrome
+        WebDriver driver = new ChromeDriver();
+
+        // Navigate to site
+        driver.get("https://myworkspace-uk-dev.euw2.pre-prod.aws.cloud.hsbc/sso_uk/gru.html");
+
+        // TODO: add automation steps (click Submit etc.)
+
+        // Close browser
+        driver.quit();
+    }
+}
