@@ -7,22 +7,27 @@ import java.util.Map;
 
 import static io.restassured.RestAssured.given;
 
+/**
+ * Generic API client. Accepts full URL, method, headers map, body, and optional basic auth.
+ */
 public class ApiClient {
 
-    public static Response send(String fullUrl, String method, Map<String, String> headers, String body, String username, String password) {
+    public static Response send(String fullUrl, String method, Map<String, String> headers, String body,
+                                String username, String password) {
         RequestSpecification req = given().relaxedHTTPSValidation();
 
         if (headers != null) {
-            for (Map.Entry<String, String> h : headers.entrySet()) {
-                req.header(h.getKey(), h.getValue());
-            }
+            headers.forEach(req::header);
         }
-        if (username != null && password != null && !username.isEmpty()) {
-            req.auth().preemptive().basic(username, password);
+
+        if (username != null && !username.isEmpty()) {
+            req.auth().preemptive().basic(username, password == null ? "" : password);
         }
+
         if (body != null && !body.trim().isEmpty() && !"GET".equalsIgnoreCase(method)) {
             req.body(body);
         }
+
         switch (method.toUpperCase()) {
             case "GET": return req.get(fullUrl);
             case "POST": return req.post(fullUrl);
