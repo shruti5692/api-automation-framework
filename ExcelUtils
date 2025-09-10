@@ -3,62 +3,117 @@ package com.framework.utils;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
-import java.io.FileInputStream;
+import java.io.*;
 import java.util.*;
 
 /**
- * Minimal Excel reader: returns list of rows as map <columnName, cellStringValue>
+ * Minimal Excel reader/writer for testdata.xlsx.
+ * Assumes first row is header.
  */
 public class ExcelUtils {
 
     public static List<Map<String, String>> readSheet(String excelPath, String sheetName) throws Exception {
         List<Map<String, String>> rows = new ArrayList<>();
-
         try (FileInputStream fis = new FileInputStream(excelPath);
-             Workbook workbook = new XSSFWorkbook(fis)) {
+             Workbook wb = new XSSFWorkbook(fis)) {
 
-            Sheet sheet = workbook.getSheet(sheetName);
+            Sheet sheet = wb.getSheet(sheetName);
             if (sheet == null) throw new IllegalArgumentException("Sheet not found: " + sheetName);
-
-            Iterator<Row> rowIterator = sheet.iterator();
-            if (!rowIterator.hasNext()) return rows; // empty sheet
-
-            // header
-            Row header = rowIterator.next();
+            Iterator<Row> it = sheet.iterator();
+            if (!it.hasNext()) return rows;
+            Row header = it.next();
             List<String> headers = new ArrayList<>();
             for (Cell c : header) {
                 c.setCellType(CellType.STRING);
-                headers.add(c.getStringCellValue());
+                headers.add(c.getStringCellValue().trim());
             }
-
-            while (rowIterator.hasNext()) {
-                Row r = rowIterator.next();
+            while (it.hasNext()) {
+                Row r = it.next();
                 Map<String, String> map = new LinkedHashMap<>();
+                boolean nonEmpty = false;
                 for (int i = 0; i < headers.size(); i++) {
                     Cell c = r.getCell(i);
                     String value = "";
                     if (c != null) {
                         if (c.getCellType() == CellType.NUMERIC) {
-                            // convert numeric to string without scientific notation
                             if (DateUtil.isCellDateFormatted(c)) {
-                                value = String.valueOf(c.getDateCellValue().getTime()); // or format date
+                                value = String.valueOf(c.getDateCellValue().getTime());
                             } else {
-                                value = String.valueOf((long) c.getNumericCellValue());
+                                double d = c.getNumericCellValue();
+                                long l = (long) d;
+                                value = String.valueOf(l);
                             }
                         } else {
                             c.setCellType(CellType.STRING);
                             value = c.getStringCellValue();
                         }
                     }
-                    // decrypt if ENC(...)
-                    value = CryptoUtils.decryptIfEncrypted(value);
-                    map.put(headers.get(i), value);
+                    if (value != null && !value.trim().isEmpty()) nonEmpty = true;
+                    // For RequestBody JSON we need to decrypt embedded ENC(...) later in JsonUtils
+                    map.put(headers.get(i), value == null ? "" : value.trim());
                 }
-                // skip empty rows (optionally)
-                boolean empty = map.values().stream().allMatch(v -> v == null || v.trim().isEmpty());
-                if (!empty) rows.add(map);
+                if (nonEmpty) rows.add(map);
             }
         }
         return rows;
+    }
+
+    /**
+     * Writes result (Pass/Fail + optional message) into column 'Result' for TestCaseID row.
+     * If Result column doesn't exist, it will be appended.
+     */
+    public static void writeResult(String excelPath, String sheetName, String testCaseId, String result) throws Exception {
+        FileInputStream fis = new FileInputStream(excelPath);
+        Workbook wb = new XSSFWorkbook(fis);
+        fis.close();
+        Sheet sheet = wb.getSheet(sheetName);
+        if (sheet == null) throw new IllegalArgumentException("Sheet not found: " + sheetName);
+
+        // find header and result column index
+        Row header = sheet.getRow(0);
+        int lastCol = header.getLastCellNum();
+        int resultCol = -1;
+        int testCaseCol = -1;
+        for (int i = 0; i < lastCol; i++) {
+            Cell c = header.getCell(i);
+            if (c == null) continue;
+            c.setCellType(CellType.STRING);
+            String h = c.getStringCellValue().trim();
+            if ("Result".equalsIgnoreCase(h)) resultCol = i;
+            if ("TestCaseID".equalsIgnoreCase(h)) testCaseCol = i;
+        }
+        if (testCaseCol == -1) throw new IllegalArgumentException("TestCaseID header not found");
+        if (resultCol == -1) {
+            resultCol = lastCol;
+            Cell rc = header.createCell(resultCol, CellType.STRING);
+            rc.setCellValue("Result");
+        }
+
+        boolean updated = false;
+        for (int r = 1; r <= sheet.getLastRowNum(); r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) continue;
+            Cell tcCell = row.getCell(testCaseCol);
+            if (tcCell == null) continue;
+            tcCell.setCellType(CellType.STRING);
+            String tc = tcCell.getStringCellValue().trim();
+            if (tc.equals(testCaseId)) {
+                Cell resCell = row.getCell(resultCol);
+                if (resCell == null) resCell = row.createCell(resultCol, CellType.STRING);
+                resCell.setCellValue(result);
+                updated = true;
+                break;
+            }
+        }
+
+        try (FileOutputStream fos = new FileOutputStream(excelPath)) {
+            wb.write(fos);
+        }
+        wb.close();
+
+        if (!updated) {
+            // Optionally append as new row
+            throw new IllegalStateException("Could not find TestCaseID=" + testCaseId + " to write result");
+        }
     }
 }
