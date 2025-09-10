@@ -1,64 +1,28 @@
-package com.framework.utils;
+import io.restassured.RestAssured;
+import io.restassured.response.Response;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import io.github.bonigarcia.wdm.WebDriverManager;
-import org.openqa.selenium.devtools.DevTools;
-import org.openqa.selenium.devtools.v125.network.Network;
-import org.openqa.selenium.devtools.v125.network.model.ResponseReceived;
-import org.openqa.selenium.devtools.v125.network.model.RequestId;
-import org.openqa.selenium.chrome.ChromeDriver;
-import org.openqa.selenium.chrome.ChromeOptions;
+public class JwtFetcher {
 
-import java.util.Optional;
+    public static String getJwtToken() {
+        // 🔹 Replace with the actual token translator URL
+        String tokenUrl = "https://myworkspace-uk-dev.euw2.pre-prod.aws.cloud.hsbc/sso_uk/gcp_tokenTranslator?_action=translate";
 
-public class JWTExtractor {
+        Response response = RestAssured
+                .given()
+                .relaxedHTTPSValidation() // if SSL issues
+                .header("Content-Type", "application/json")
+                // add any body/headers needed for authentication
+                .post(tokenUrl);
+
+        if (response.statusCode() == 200) {
+            return response.jsonPath().getString("issued_token");
+        } else {
+            throw new RuntimeException("Failed to fetch JWT token. Status: " + response.statusCode());
+        }
+    }
 
     public static void main(String[] args) {
-        // Setup Chrome
-        WebDriverManager.chromedriver().setup();
-        ChromeOptions options = new ChromeOptions();
-        options.addArguments("--auto-open-devtools-for-tabs"); // optional
-        ChromeDriver driver = new ChromeDriver(options);
-
-        // Create DevTools session
-        DevTools devTools = driver.getDevTools();
-        devTools.createSession();
-        devTools.send(Network.enable(Optional.empty(), Optional.empty(), Optional.empty()));
-
-        // Add listener for network responses
-        devTools.addListener(Network.responseReceived(), response -> {
-            ResponseReceived res = response;
-            String url = res.getResponse().getUrl();
-
-            // Check if it matches our JWT endpoint
-            if (url.contains("gcp_tokenTranslator?_action=translate")) {
-                RequestId requestId = res.getRequestId();
-                try {
-                    String body = devTools.send(Network.getResponseBody(requestId)).getBody();
-                    
-                    // Parse issued_token from JSON
-                    JsonObject json = JsonParser.parseString(body).getAsJsonObject();
-                    if (json.has("issued_token")) {
-                        String jwt = json.get("issued_token").getAsString();
-                        System.out.println("✅ Extracted JWT: " + jwt);
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-        });
-
-        // Navigate to login page (replace with real SSO URL)
-        driver.get("https://myworkspace-uk-dev.euw2.pre-prod.aws.cloud.hsbc/sso_uk/gru.html");
-
-        // Keep browser open for manual login or until token is captured
-        try {
-            Thread.sleep(60000); // wait for 1 min
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-
-        driver.quit();
+        String jwt = getJwtToken();
+        System.out.println("Fetched JWT: " + jwt);
     }
 }
