@@ -3,32 +3,35 @@ package com.framework.utils;
 import com.framework.config.ConfigManager;
 
 import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.security.SecureRandom;
 import java.util.Base64;
 
 /**
- * AES decrypt/encrypt using key stored as Base64 in encryption.key.
- * This uses AES/ECB/PKCS5Padding for simplicity (for PoC). Prefer AES-GCM in production.
+ * AES utility using a Base64-encoded key file.
+ * This implementation uses AES/ECB/PKCS5Padding for simplicity (POC).
+ * For production replace with AES-GCM/CBC with IV and secure key storage.
  */
 public class CryptoUtils {
-    private static final String ALGO = "AES/ECB/PKCS5Padding";
-    private static SecretKeySpec keySpec;
+    private static final String TRANSFORMATION = "AES/ECB/PKCS5Padding";
+    private static SecretKeySpec keySpec = null;
 
     private static void ensureKeyLoaded() throws Exception {
         if (keySpec != null) return;
-        String keyPath = ConfigManager.getEncryptionKeyFilePath();
-        if (keyPath == null) throw new IllegalStateException("encryption.key not configured");
-        byte[] keyBytes = Files.readAllBytes(Paths.get(keyPath));
-        String base64 = new String(keyBytes).trim();
-        byte[] decoded = Base64.getDecoder().decode(base64);
-        keySpec = new SecretKeySpec(decoded, "AES");
+        String keyPath = ConfigManager.get("encryption.key");
+        if (keyPath == null) throw new IllegalStateException("encryption.key property not set");
+        byte[] base64bytes = Files.readAllBytes(Paths.get(keyPath));
+        String base64 = new String(base64bytes).trim();
+        byte[] keyBytes = Base64.getDecoder().decode(base64);
+        keySpec = new SecretKeySpec(keyBytes, "AES");
     }
 
     public static String encrypt(String plain) throws Exception {
         ensureKeyLoaded();
-        Cipher cipher = Cipher.getInstance(ALGO);
+        Cipher cipher = Cipher.getInstance(TRANSFORMATION);
         cipher.init(Cipher.ENCRYPT_MODE, keySpec);
         byte[] enc = cipher.doFinal(plain.getBytes());
         return Base64.getEncoder().encodeToString(enc);
@@ -36,14 +39,14 @@ public class CryptoUtils {
 
     public static String decrypt(String encBase64) throws Exception {
         ensureKeyLoaded();
-        Cipher cipher = Cipher.getInstance(ALGO);
+        Cipher cipher = Cipher.getInstance(TRANSFORMATION);
         cipher.init(Cipher.DECRYPT_MODE, keySpec);
         byte[] decoded = Base64.getDecoder().decode(encBase64);
         byte[] dec = cipher.doFinal(decoded);
         return new String(dec);
     }
 
-    /** Decrypts if value is of form ENC(xxx) else returns value */
+    /** If value is ENC(<base64>), decrypt and return plain; else return as-is. */
     public static String resolve(String value) throws Exception {
         if (value == null) return null;
         value = value.trim();
@@ -52,5 +55,13 @@ public class CryptoUtils {
             return decrypt(payload);
         }
         return value;
+    }
+
+    /** Helper to create a Base64 key (128-bit) and return it as string. */
+    public static String generateBase64Key() throws Exception {
+        KeyGenerator kg = KeyGenerator.getInstance("AES");
+        kg.init(128, SecureRandom.getInstanceStrong());
+        byte[] key = kg.generateKey().getEncoded();
+        return Base64.getEncoder().encodeToString(key);
     }
 }
