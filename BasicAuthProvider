@@ -1,0 +1,21 @@
+package com.framework.auth;
+
+import io.restassured.specification.RequestSpecification;
+
+/** Basic (username/password) authentication provider. */
+public class BasicAuthProvider implements AuthProvider {
+    private final String username;
+    private final String password;
+
+    public BasicAuthProvider(String username, String password) {
+        this.username = username == null ? "" : username;
+        this.password = password == null ? "" : password;
+    }
+
+    @Override
+    public void apply(RequestSpecification request) {
+        if (username != null && !username.isEmpty()) {
+            request.auth().preemptive().basic(username, password);
+        }
+    }
+}
