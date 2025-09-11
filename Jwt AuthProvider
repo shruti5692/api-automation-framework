@@ -1,0 +1,22 @@
+package com.framework.auth;
+
+import io.restassured.specification.RequestSpecification;
+
+/**
+ * JWT provider — given a JWT string (or supplier), it sets Authorization header.
+ */
+public class JwtAuthProvider implements AuthProvider {
+    private final JwtFetcher jwtFetcher;
+
+    public JwtAuthProvider(JwtFetcher jwtFetcher) {
+        this.jwtFetcher = jwtFetcher;
+    }
+
+    @Override
+    public void apply(RequestSpecification request) {
+        String jwt = jwtFetcher.fetchToken();
+        if (jwt != null && !jwt.isEmpty()) {
+            request.header("Authorization", "Bearer " + jwt);
+        }
+    }
+}
