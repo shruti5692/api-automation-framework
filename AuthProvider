@@ -1,0 +1,10 @@
+package com.framework.auth;
+
+import io.restassured.specification.RequestSpecification;
+
+/**
+ * Apply auth to a RestAssured request specification.
+ */
+public interface AuthProvider {
+    void apply(RequestSpecification request);
+}
