@@ -1,88 +1,115 @@
 package tests;
 
+import com.framework.utils.ExcelUtils;
 import okhttp3.*;
 import org.testng.Assert;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
-import utils.ExcelUtil;   // your existing Excel utility
+import com.jayway.jsonpath.JsonPath;      // Add dependency if not already present
+
+import java.io.File;
 import java.util.*;
 
-public class CustomerAccountTest {
+public class CustomerAccountExcelTest {
 
-    @Test(dataProvider = "getTestData", dataProviderClass = ExcelUtil.class)
-    public void validateAccounts(Map<String, String> data) throws Exception {
+    private static final String EXCEL_PATH = "src/test/resources/TestData.xlsx";
+    private static final String SHEET_NAME = "Accounts";   // your sheet name
 
-        // --- 1. Read test data from Excel ---
-        String username      = data.get("Username");
-        String authIndex     = data.get("AuthIndexValue");
-        String sensitiveKey  = data.get("SensitiveKey");
-        String custId        = data.get("CustomerIdentificationNumber");
-        String expectedAccts = data.get("ExpectedAccounts"); // comma-separated
+    /**
+     * Reads all rows from Excel and feeds them to TestNG.
+     */
+    @DataProvider(name = "excelData")
+    public Object[][] excelData() throws Exception {
+        List<Map<String,String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
+        Object[][] data = new Object[rows.size()][1];
+        for (int i = 0; i < rows.size(); i++) {
+            data[i][0] = rows.get(i);
+        }
+        return data;
+    }
 
-        // --- 2. Fetch Staff JWT ---
-        String jwt = StaffJwtFetcher.fetchJwt(username, authIndex);
+    @Test(dataProvider = "excelData")
+    public void validateAccounts(Map<String, String> row) throws Exception {
 
-        // --- 3. Build Sensitive-Data header value ---
-        String sensitiveDataJson =
-            "[{\"key\":\"" + sensitiveKey + "\",\"value\":\"" + custId + "\"}]";
+        // ----- 1. Extract input columns -----
+        String testCaseId    = row.get("TestCaseID");
+        String username      = row.get("Username");
+        String authIndex     = row.get("AuthIndexValue");
+        String sensitiveKey  = row.get("SensitiveKey");
+        String custId        = row.get("CustomerIdentificationNumber");
+        String expectedAccts = row.get("ExpectedAccounts"); // comma-separated list
 
-        // --- 4. Build URL exactly as in Insomnia ---
-        String url = "https://digitaldev-int-rbwm.systems.uk.hsbc/"
-            + "cb-rps-05/gb-hbeu-rps-pod-cust-rel-acct-enq-sct-internal-proxy/"
-            + "v1/cust/" + sensitiveKey + "/rel-acct?maxAccounts=0004";
+        String result;   // PASS or FAIL
 
-        // --- 5. Create OkHttp request with all headers ---
-        OkHttpClient client = new OkHttpClient();
-        Request request = new Request.Builder()
-            .url(url)
-            .get()
-            .addHeader("cookie",
-                "LtpaToken2=<copy from working Insomnia call>") // if required
-            .addHeader("X-HSBC-Locale", "en_GB")
-            .addHeader("X-HSBC-Chnl-CountryCode", "GB")
-            .addHeader("X-HSBC-Chnl-Group-Member", "HBEU")
-            .addHeader("X-HSBC-User-Id", "C12345678")
-            .addHeader("X-HSBC-CAM-Level", "40")
-            .addHeader("X-HSBC-Channel-Id", "OHB")
-            .addHeader("X-HSBC-Src-Device-Id", "1234")
-            .addHeader("X-HSBC-Session-Correlation-Id", "q2")
-            .addHeader("X-HSBC-Src-UserAgent",
-                "Apache-HttpClient/4.5.6 (Java/1.8.0_112)")
-            .addHeader("X-HSBC-Request-Correlation-Id", "shubham")
-            .addHeader("Content-Type", "application/json")
-            .addHeader("X-HSBC-IP-Id", "136.46.24.54")
-            .addHeader("X-HSBC-Bene-Type", "RSP9")
-            .addHeader("X-HSBC-E2E-Trust-Token", jwt)
-            .addHeader("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2")
-            .addHeader("X-HSBC-Client-Secret", "68Cf51e5D5514180bf211DAf3396AD1C")
-            .addHeader("X-HSBC-Sort-Code", "000001")
-            .addHeader("X-HSBC-Operator-Service-Unit-Id", "400521")
-            .addHeader("X-HSBC-Operator-Institution-Id", "Z")
-            .addHeader("x-forwarded-for", "1234")
-            .addHeader("accept-language", "en")
-            .addHeader("X-HSBC-Sensitive-Data", sensitiveDataJson)
-            .build();
+        try {
+            // ----- 2. Fetch Staff JWT -----
+            String jwt = StaffJwtFetcher.fetchJwt(username, authIndex);
 
-        // --- 6. Execute call ---
-        try (Response response = client.newCall(request).execute()) {
+            // ----- 3. Prepare Sensitive-Data header -----
+            String sensitiveDataJson =
+                    "[{\"key\":\"" + sensitiveKey + "\",\"value\":\"" + custId + "\"}]";
 
-            int status = response.code();
-            String body = response.body() != null ? response.body().string() : "";
+            // ----- 4. Build URL -----
+            String url = "https://digitaldev-int-rbwm.systems.uk.hsbc/"
+                    + "cb-rps-05/gb-hbeu-rps-pod-cust-rel-acct-enq-sct-internal-proxy/"
+                    + "v1/cust/" + sensitiveKey + "/rel-acct?maxAccounts=0004";
 
-            // Assert HTTP status
-            Assert.assertEquals(status, 200,
-                "HTTP status expected [200] but found [" + status + "]");
+            // ----- 5. Create request -----
+            OkHttpClient client = new OkHttpClient();
+            Request request = new Request.Builder()
+                    .url(url)
+                    .get()
+                    .addHeader("X-HSBC-Locale", "en_GB")
+                    .addHeader("X-HSBC-Chnl-CountryCode", "GB")
+                    .addHeader("X-HSBC-Chnl-Group-Member", "HBEU")
+                    .addHeader("X-HSBC-User-Id", "C12345678")
+                    .addHeader("X-HSBC-CAM-Level", "40")
+                    .addHeader("X-HSBC-Channel-Id", "OHB")
+                    .addHeader("X-HSBC-Src-Device-Id", "1234")
+                    .addHeader("X-HSBC-Session-Correlation-Id", "q2")
+                    .addHeader("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8)")
+                    .addHeader("X-HSBC-Request-Correlation-Id", "shubham")
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("X-HSBC-IP-Id", "136.46.24.54")
+                    .addHeader("X-HSBC-Bene-Type", "RSP9")
+                    .addHeader("X-HSBC-E2E-Trust-Token", jwt)
+                    .addHeader("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2")
+                    .addHeader("X-HSBC-Client-Secret", "68Cf51e5D5514180bf211DAf3396AD1C")
+                    .addHeader("X-HSBC-Sort-Code", "000001")
+                    .addHeader("X-HSBC-Operator-Service-Unit-Id", "400521")
+                    .addHeader("X-HSBC-Operator-Institution-Id", "Z")
+                    .addHeader("x-forwarded-for", "1234")
+                    .addHeader("accept-language", "en")
+                    .addHeader("X-HSBC-Sensitive-Data", sensitiveDataJson)
+                    .build();
 
-            // --- 7. Validate accounts from the response ---
-            // Collect all accountNumber fields from the JSON
-            List<String> actualAccounts = JsonPath.read(body,
-                "$..accountDetails.accountNumber");
+            // ----- 6. Execute call -----
+            try (Response resp = client.newCall(request).execute()) {
+                int status = resp.code();
+                String body = resp.body() != null ? resp.body().string() : "";
 
-            // Compare with expected list from Excel
-            List<String> expectedList =
-                Arrays.asList(expectedAccts.replaceAll("\\s", "").split(","));
-            Assert.assertTrue(actualAccounts.containsAll(expectedList),
-                "Accounts mismatch. Expected: " + expectedList +
-                " Actual: " + actualAccounts);
+                Assert.assertEquals(status, 200,
+                        "Expected HTTP 200, but got " + status);
+
+                // ----- 7. Extract account numbers and compare -----
+                List<String> actualAccounts = JsonPath.read(body,
+                        "$..accountDetails.accountNumber");
+                List<String> expectedList = Arrays.asList(
+                        expectedAccts.replaceAll("\\s", "").split(","));
+
+                Assert.assertTrue(actualAccounts.containsAll(expectedList),
+                        "Accounts mismatch. Expected " + expectedList +
+                        " but got " + actualAccounts);
+            }
+
+            result = "PASS";
+
+        } catch (AssertionError | Exception e) {
+            result = "FAIL: " + e.getMessage();
+            throw e;   // still fail the TestNG test
+        } finally {
+            // ----- 8. Write result back to Excel -----
+            ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
         }
     }
 }
