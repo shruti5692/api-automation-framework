@@ -5,102 +5,90 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.testng.Assert;
+import org.testng.annotations.DataProvider;
+import org.testng.annotations.Test;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.util.*;
 
-public class CustomerAccountTest {
+public class CustomerAccountIT {
 
     private static final String API_URL =
-            "https://digitaldev-int-rbwm.systems.uk.hsbc/cb-rps-05/gb-hbeu-rps-pod-cust-rel-acct-proxy/v1/"
-          + "cust/84d89877f0d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7884/rel-acct"
-          + "?maxAccounts=0004";
+        "https://digitaldev-int-rbwm.systems.uk.hsbc/cb-rps-05/gb-hbeu-rps-pod-cust-rel-acct-proxy/v1/"
+      + "cust/%s/rel-acct?maxAccounts=0004"; // %s = SensitiveKey
 
-    // static key used inside Sensitive-Data header
-    private static final String SENSITIVE_KEY =
-            "84d89877f0d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7884";
+    private final OkHttpClient client = new OkHttpClient();
+    private final ObjectMapper mapper = new ObjectMapper();
 
-    public static void main(String[] args) throws Exception {
-
-        // 1. Read Excel rows
-        List<TestRow> rows = readExcel("src/test/resources/CustomerData.xlsx");
-
-        // 2. JWT token (generated once per run)
-        String jwtToken = StaffJwtExtractor.generateJwt(); // your existing class/method
-
-        OkHttpClient client = new OkHttpClient();
-        ObjectMapper mapper = new ObjectMapper();
-
-        // to store all full responses
-        List<String> allResponses = new ArrayList<>();
-
-        for (TestRow row : rows) {
-            // 3. Build Sensitive-Data header JSON
-            String sensitiveHeader = "[[{\"key\":\"" + SENSITIVE_KEY +
-                                     "\",\"value\":\"" + row.cin + "\"}]]";
-
-            Request request = new Request.Builder()
-                    .url(API_URL)
-                    .addHeader("Accept", "application/json")
-                    .addHeader("X-HSBC-E2E-Trust-Token", jwtToken)
-                    .addHeader("X-HSBC-Sensitive-Data", sensitiveHeader)
-                    .build();
-
-            try (Response response = client.newCall(request).execute()) {
-                String json = Objects.requireNonNull(response.body()).string();
-                allResponses.add(json);
-
-                if (response.code() != 200) {
-                    System.err.println(row.testId + " FAILED – HTTP " + response.code());
-                    continue;
-                }
-
-                // 4. Extract all accountNumber values
-                JsonNode root = mapper.readTree(json);
-                List<String> actualAccounts = new ArrayList<>();
-                root.findValues("accountNumber")
-                        .forEach(n -> actualAccounts.add(n.asText()));
-
-                // 5. Compare with expected list
-                List<String> expected = Arrays.asList(row.expectedAccounts.split(","));
-                if (new HashSet<>(actualAccounts).containsAll(expected)) {
-                    System.out.println(row.testId + " PASSED");
-                } else {
-                    System.out.println(row.testId + " FAILED – Expected: " + expected +
-                            " Actual: " + actualAccounts);
-                }
-            }
-        }
-
-        // Optional: you can inspect allResponses later
-        System.out.println("Total responses stored: " + allResponses.size());
+    @DataProvider(name = "customerData")
+    public Object[][] customerData() throws Exception {
+        return readExcel("src/test/resources/CustomerData.xlsx");
     }
 
-    // Helper to read Excel sheet
-    private static List<TestRow> readExcel(String path) throws Exception {
-        List<TestRow> list = new ArrayList<>();
+    @Test(dataProvider = "customerData")
+    public void verifyCustomerAccounts(String testId,
+                                       String username,
+                                       String authIndexValue,
+                                       String sensitiveKey,
+                                       String cin,
+                                       String expectedAccounts) throws Exception {
+
+        // 1. Get fresh JWT for this username / authIndexValue
+        String jwtToken = StaffJwtFetcher.fetchJwt(username, authIndexValue);
+
+        // 2. Build X-HSBC-Sensitive-Data header
+        String sensitiveHeader = "[[{\"key\":\"" + sensitiveKey + "\",\"value\":\"" + cin + "\"}]]";
+
+        // 3. Call API (note: URL path contains the same key)
+        String url = String.format(API_URL, sensitiveKey);
+
+        Request request = new Request.Builder()
+                .url(url)
+                .addHeader("Accept", "application/json")
+                .addHeader("X-HSBC-E2E-Trust-Token", jwtToken)
+                .addHeader("X-HSBC-Sensitive-Data", sensitiveHeader)
+                .build();
+
+        try (Response response = client.newCall(request).execute()) {
+            Assert.assertEquals(response.code(), 200, "HTTP status");
+
+            String json = Objects.requireNonNull(response.body()).string();
+
+            // store raw JSON if you need it later
+            System.out.println("[" + testId + "] Full response: " + json);
+
+            // 4. Extract all accountNumbers from JSON
+            JsonNode root = mapper.readTree(json);
+            List<String> actualAccounts = new ArrayList<>();
+            root.findValues("accountNumber").forEach(n -> actualAccounts.add(n.asText()));
+
+            // 5. Compare with expected
+            List<String> expectedList =
+                    Arrays.asList(expectedAccounts.split("\\s*,\\s*"));
+            Assert.assertTrue(new HashSet<>(actualAccounts).containsAll(expectedList),
+                    "Expected " + expectedList + " but got " + actualAccounts);
+        }
+    }
+
+    private Object[][] readExcel(String path) throws Exception {
+        List<Object[]> data = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(new File(path));
              Workbook wb = new XSSFWorkbook(fis)) {
             Sheet sheet = wb.getSheet("Tests");
             for (Row r : sheet) {
-                if (r.getRowNum() == 0) continue; // skip header
-                String id = r.getCell(0).getStringCellValue();
-                String cin = r.getCell(1).getStringCellValue();
-                String expected = r.getCell(2).getStringCellValue();
-                list.add(new TestRow(id, cin, expected));
+                if (r.getRowNum() == 0) continue; // header
+                data.add(new Object[]{
+                        r.getCell(0).getStringCellValue(), // TestCaseID
+                        r.getCell(1).getStringCellValue(), // Username
+                        r.getCell(2).getStringCellValue(), // AuthIndexValue
+                        r.getCell(3).getStringCellValue(), // SensitiveKey
+                        r.getCell(4).getStringCellValue(), // CIN
+                        r.getCell(5).getStringCellValue()  // ExpectedAccounts
+                });
             }
         }
-        return list;
+        return data.toArray(new Object[0][]);
     }
-
-    // simple data holder
-    private static class TestRow {
-        String testId, cin, expectedAccounts;
-        TestRow(String id, String cin, String exp) {
-            this.testId = id;
-            this.cin = cin;
-            this.expectedAccounts = exp;
-        }
-    }
-}
+}}
