@@ -1,4 +1,77 @@
-TestName	Endpoint	Method	Username*	Password*	Headers	RequestBody (JSON)*	ExpectedStatus	ExpectedResponse (JSON)
+Sure, here’s a ready-to-copy template for your new Excel workbook with both sheets fully filled out, including the complete headers and a placeholder Result column.
 
-TC01	/wallet-provisions	POST	ENC(user123)	ENC(pass123)	{"Content-Type":"application/json"}	{"debitCardNumber":"ENC(44624207665704)","acctType":"A","wallet":"APPLEPAY"}	200	{"status":"Success"}
-TC02	/wallet-provisions	POST	ENC(user456)	ENC(pass456)	{"Content-Type":"application/json"}	{"debitCardNumber":"ENC(12345678901234)","acctType":"B","wallet":"GOOGLEPAY"}	400	{"errorCode":"INVALID_ACCOUNT"}
+
+---
+
+🗂  Workbook: TestData.xlsx
+
+1️⃣  Auth  (very simple)
+
+Username	Result
+
+45453759	
+98765432	
+
+
+The Result column is optional here, but I included it so you can also log PASS/FAIL of the auth step if you ever want to.
+
+
+---
+
+2️⃣  TestCases
+
+TestCaseID	CustomerIdentificationNumber	Headers	ExpectedOutput	Result
+
+TC01	1507092040	{"X-HSBC-Locale":"en_GB","X-HSBC-Chnl-CountryCode":"GB","X-HSBC-Chnl-Group-Member":"HBEU","X-HSBC-User-Id":"C12345678","X-HSBC-CAM-Level":"40","X-HSBC-Channel-Id":"OHB","X-HSBC-Src-Device-Id":"1234","X-HSBC-Session-Correlation-Id":"q2","X-HSBC-Src-UserAgent":"Apache-HttpClient/4.5.6 (Java/1.8)","X-HSBC-Request-Correlation-Id":"shubham","Content-Type":"application/json","X-HSBC-IP-Id":"136.46.24.54","X-HSBC-Bene-Type":"RSP9","X-HSBC-Client-Id":"25b5dfb6bb584c708801082c884f15d2","X-HSBC-Client-Secret":"68Cf51e5D5514180bf211DAf3396AD1C","X-HSBC-Sort-Code":"000001","X-HSBC-Operator-Service-Unit-Id":"400521","X-HSBC-Operator-Institution-Id":"Z","x-forwarded-for":"1234","accept-language":"en"}	[{"productCode":"SAV","accountNumber":"1770489","sortCode":"001122","accountIn":"GBP"},{"productCode":"CUR","accountNumber":"51770454","sortCode":"001133","accountIn":"GBP"}]	
+TC02	1608083050	{"X-HSBC-Locale":"en_GB","X-HSBC-Chnl-CountryCode":"GB","X-HSBC-Chnl-Group-Member":"HBEU","X-HSBC-User-Id":"C22334455","X-HSBC-CAM-Level":"40","X-HSBC-Channel-Id":"OHB","X-HSBC-Src-Device-Id":"1234","X-HSBC-Session-Correlation-Id":"q3","X-HSBC-Src-UserAgent":"Apache-HttpClient/4.5.6 (Java/1.8)","X-HSBC-Request-Correlation-Id":"alex","Content-Type":"application/json","X-HSBC-IP-Id":"136.46.24.55","X-HSBC-Bene-Type":"RSP9","X-HSBC-Client-Id":"25b5dfb6bb584c708801082c884f15d2","X-HSBC-Client-Secret":"68Cf51e5D5514180bf211DAf3396AD1C","X-HSBC-Sort-Code":"000002","X-HSBC-Operator-Service-Unit-Id":"400522","X-HSBC-Operator-Institution-Id":"Z","x-forwarded-for":"5678","accept-language":"en"}	[{"productCode":"CUR","accountNumber":"8880011","sortCode":"001155","accountIn":"USD"},{"productCode":"SAV","accountNumber":"8880012","sortCode":"001166","accountIn":"USD"}]	
+
+
+Key Points
+
+Headers is a single-cell JSON object string—your Java code will read it and add each header dynamically.
+
+ExpectedOutput is a JSON array of objects, each with the 4 fields you’ll validate:
+
+productCode
+
+accountNumber
+
+sortCode
+
+accountIn
+
+
+Result column starts blank and will be filled with PASS or FAIL by the framework.
+
+
+
+---
+
+📥 How to Save
+
+Create a workbook named TestData.xlsx in src/test/resources/.
+
+Add two sheets: Auth and TestCases.
+
+Copy the tables exactly as shown (Excel allows long JSON strings; they’ll wrap automatically).
+
+
+
+---
+
+Once you have this Excel file ready, our next step will be to update the Java code so:
+
+1. ExcelUtils can read:
+
+Usernames from Auth
+
+Test rows from TestCases
+
+
+
+2. The framework writes back to the Result column automatically.
+
+
+
+Would you like me to draft the updated ExcelUtils read/write helpers next?
+
