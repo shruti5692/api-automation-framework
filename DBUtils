@@ -1,73 +1,69 @@
-package com.framework.core;
+package org.framework.utils;
+
+import org.framework.config.ConfigManager;
 
 import java.sql.*;
 import java.util.*;
 
 /**
- * Generic database utility for reading data.
- * Usage:
- *   List<Map<String,Object>> rows =
- *         DbUtils.executeQuery("SELECT * FROM CUD_PROD_RELN WHERE CUSTOMER_ID=?",
- *                              customerId);
+ * Generic DB helper. Reads driver/url/user/pass from config.properties.
+ * Also offers a convenience method for CUD_PROD_RELN.
  */
-public class DbUtils {
+public final class DBUtils {
 
-    private static final String URL      = ConfigManager.get("db.url");
-    private static final String USER     = ConfigManager.get("db.user");
-    private static final String PASSWORD = ConfigManager.get("db.password");
+    private static final String DRIVER = ConfigManager.get("db.driver");
+    private static final String URL = buildUrl();
+    private static final String USER = ConfigManager.get("db.user");
+    private static final String PASS = ConfigManager.get("db.password");
 
-    // optional driver class, load once
     static {
-        try {
-            String driver = ConfigManager.get("db.driver");  // e.g. "com.ibm.db2.jcc.DB2Driver"
-            if (driver != null && !driver.isBlank()) {
-                Class.forName(driver);
+        if (DRIVER != null && !DRIVER.isBlank()) {
+            try { Class.forName(DRIVER); } catch (ClassNotFoundException e) {
+                System.err.println("[DBUtils] Driver class not found: " + DRIVER + " -> " + e.getMessage());
             }
-        } catch (Exception e) {
-            throw new RuntimeException("Unable to load DB driver", e);
         }
     }
 
-    /**
-     * Executes a SELECT query with optional positional parameters.
-     * @param sql      SQL statement with ? placeholders
-     * @param params   values for each placeholder
-     * @return         list of rows, each row is Map<columnName, Object>
-     */
+    private DBUtils() {}
+
+    private static String buildUrl() {
+        String explicit = ConfigManager.get("db.url");
+        if (explicit != null && !explicit.isBlank()) return explicit;
+        String host = ConfigManager.get("db.host", "localhost");
+        String port = ConfigManager.get("db.port", "50000");
+        String db = ConfigManager.get("db.database", "INTST02");
+        return "jdbc:db2://" + host + ":" + port + "/" + db;
+    }
+
     public static List<Map<String,Object>> executeQuery(String sql, Object... params) {
-        List<Map<String,Object>> result = new ArrayList<>();
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+        List<Map<String,Object>> out = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASS);
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            // fill placeholders
             if (params != null) {
-                for (int i = 0; i < params.length; i++) {
-                    ps.setObject(i + 1, params[i]);
-                }
+                for (int i=0;i<params.length;i++) ps.setObject(i+1, params[i]);
             }
-
             try (ResultSet rs = ps.executeQuery()) {
                 ResultSetMetaData md = rs.getMetaData();
-                int colCount = md.getColumnCount();
+                int cols = md.getColumnCount();
                 while (rs.next()) {
                     Map<String,Object> row = new LinkedHashMap<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        row.put(md.getColumnLabel(i), rs.getObject(i));
-                    }
-                    result.add(row);
+                    for (int i=1;i<=cols;i++) row.put(md.getColumnLabel(i), rs.getObject(i));
+                    out.add(row);
                 }
             }
         } catch (SQLException e) {
-            throw new RuntimeException("DB query failed: " + sql, e);
+            throw new RuntimeException("DB query failed: " + e.getMessage(), e);
         }
-        return result;
+        return out;
     }
 
     /**
-     * Utility to fetch a single row quickly.
+     * Convenience method for CUD_PROD_RELN.
+     * Returns list of rows (columns returned: PRODUCT_CODE, ACCOUNT_NUMBER, SORT_CODE, ACCOUNT_CIN, maybe CURRENCY_CODE).
      */
-    public static Map<String,Object> fetchOne(String sql, Object... params) {
-        List<Map<String,Object>> rows = executeQuery(sql, params);
-        return rows.isEmpty() ? Collections.emptyMap() : rows.get(0);
+    public static List<Map<String,Object>> fetchCudProdRelnByCin(String accountCin) {
+        String sql = "SELECT PRODUCT_CODE, ACCOUNT_NUMBER, SORT_CODE, ACCOUNT_CIN, CURRENCY_CODE FROM CUD_PROD_RELN WHERE ACCOUNT_CIN = ?";
+        return executeQuery(sql, accountCin);
     }
 }
