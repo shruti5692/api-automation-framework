@@ -1,0 +1,181 @@
+package org.framework.utils;
+
+import java.util.*;
+import java.util.function.Function;
+
+/**
+ * Generic data validator that works with Maps instead of specific model classes.
+ * Supports field normalization, validation rules, and comparison operations.
+ */
+public class DataValidator {
+    
+    private Map<String, Function<String, String>> normalizers = new HashMap<>();
+    private Set<String> requiredFields = new HashSet<>();
+    private Set<String> uppercaseFields = new HashSet<>();
+    
+    public DataValidator() {}
+    
+    /**
+     * Add a field normalizer function
+     */
+    public DataValidator addNormalizer(String field, Function<String, String> normalizer) {
+        normalizers.put(field, normalizer);
+        return this;
+    }
+    
+    /**
+     * Mark fields as required
+     */
+    public DataValidator requireFields(String... fields) {
+        Collections.addAll(requiredFields, fields);
+        return this;
+    }
+    
+    /**
+     * Mark fields to be converted to uppercase
+     */
+    public DataValidator uppercaseFields(String... fields) {
+        Collections.addAll(uppercaseFields, fields);
+        return this;
+    }
+    
+    /**
+     * Normalize a single record (Map) according to configured rules
+     */
+    public Map<String, String> normalize(Map<String, String> record) {
+        Map<String, String> normalized = new LinkedHashMap<>();
+        
+        for (Map.Entry<String, String> entry : record.entrySet()) {
+            String field = entry.getKey();
+            String value = entry.getValue();
+            
+            // Basic null/trim normalization
+            value = value == null ? "" : value.trim();
+            
+            // Apply uppercase if configured
+            if (uppercaseFields.contains(field)) {
+                value = value.toUpperCase();
+            }
+            
+            // Apply custom normalizer if configured
+            if (normalizers.containsKey(field)) {
+                value = normalizers.get(field).apply(value);
+            }
+            
+            normalized.put(field, value);
+        }
+        
+        return normalized;
+    }
+    
+    /**
+     * Normalize a list of records
+     */
+    public List<Map<String, String>> normalize(List<Map<String, String>> records) {
+        return records.stream()
+                .map(this::normalize)
+                .collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
+    }
+    
+    /**
+     * Validate that required fields are present and non-empty
+     */
+    public void validate(Map<String, String> record) {
+        for (String required : requiredFields) {
+            String value = record.get(required);
+            if (value == null || value.trim().isEmpty()) {
+                throw new IllegalArgumentException("Required field missing or empty: " + required);
+            }
+        }
+    }
+    
+    /**
+     * Compare two normalized records for equality
+     */
+    public boolean equals(Map<String, String> record1, Map<String, String> record2) {
+        if (record1.size() != record2.size()) return false;
+        
+        for (Map.Entry<String, String> entry : record1.entrySet()) {
+            String key = entry.getKey();
+            String value1 = entry.getValue();
+            String value2 = record2.get(key);
+            
+            if (!Objects.equals(value1, value2)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
+    /**
+     * Compare two sets of records (order independent)
+     */
+    public ComparisonResult compareRecordSets(List<Map<String, String>> set1, 
+                                            List<Map<String, String>> set2, 
+                                            String setName1, String setName2) {
+        
+        Set<Map<String, String>> normalizedSet1 = new HashSet<>(normalize(set1));
+        Set<Map<String, String>> normalizedSet2 = new HashSet<>(normalize(set2));
+        
+        boolean matches = normalizedSet1.equals(normalizedSet2);
+        
+        Set<Map<String, String>> onlyInSet1 = new HashSet<>(normalizedSet1);
+        onlyInSet1.removeAll(normalizedSet2);
+        
+        Set<Map<String, String>> onlyInSet2 = new HashSet<>(normalizedSet2);
+        onlyInSet2.removeAll(normalizedSet1);
+        
+        return new ComparisonResult(matches, onlyInSet1, onlyInSet2, setName1, setName2);
+    }
+    
+    /**
+     * Result of comparing two record sets
+     */
+    public static class ComparisonResult {
+        public final boolean matches;
+        public final Set<Map<String, String>> onlyInFirst;
+        public final Set<Map<String, String>> onlyInSecond;
+        public final String firstSetName;
+        public final String secondSetName;
+        
+        public ComparisonResult(boolean matches, Set<Map<String, String>> onlyInFirst,
+                              Set<Map<String, String>> onlyInSecond, 
+                              String firstSetName, String secondSetName) {
+            this.matches = matches;
+            this.onlyInFirst = onlyInFirst;
+            this.onlyInSecond = onlyInSecond;
+            this.firstSetName = firstSetName;
+            this.secondSetName = secondSetName;
+        }
+        
+        public String getDetailedMessage() {
+            if (matches) return "Record sets match perfectly";
+            
+            StringBuilder sb = new StringBuilder();
+            sb.append("Record sets don't match. ");
+            
+            if (!onlyInFirst.isEmpty()) {
+                sb.append("Only in ").append(firstSetName).append(": ").append(onlyInFirst.size()).append(" records. ");
+            }
+            
+            if (!onlyInSecond.isEmpty()) {
+                sb.append("Only in ").append(secondSetName).append(": ").append(onlyInSecond.size()).append(" records. ");
+            }
+            
+            return sb.toString();
+        }
+    }
+    
+    // Common normalizers as static methods
+    public static Function<String, String> removeLeadingZeros() {
+        return s -> {
+            if (s == null || s.trim().isEmpty()) return "";
+            String trimmed = s.trim();
+            return trimmed.replaceFirst("^0+(?!$)", "");
+        };
+    }
+    
+    public static Function<String, String> basicTrim() {
+        return s -> s == null ? "" : s.trim();
+    }
+}
