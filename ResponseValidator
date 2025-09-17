@@ -1,0 +1,26 @@
+package org.framework.utils;
+
+import java.util.List;
+import java.util.Map;
+
+public class ResponseValidator {
+
+    /**
+     * Compare API fields with DB result.
+     * @param apiData  Map of API fields (productCode, accountNumber, etc.)
+     * @param dbRows   DB rows from DBUtils (List of Map<col, value>)
+     * @return true if at least one DB row matches all fields.
+     */
+    public static boolean validateAccount(List<Map<String,Object>> dbRows,
+                                          Map<String,String> apiData) {
+
+        for (Map<String,Object> dbRow : dbRows) {
+            boolean match =
+                   apiData.get("productCode").equals(String.valueOf(dbRow.get("PROD_COD")))
+                && apiData.get("accountNumber").equals(String.valueOf(dbRow.get("PROD_ID")))
+                && apiData.get("customerNumber").equals(String.valueOf(dbRow.get("CUST_NO")));
+            if (match) return true;
+        }
+        return false;
+    }
+}
