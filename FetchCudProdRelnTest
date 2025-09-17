@@ -1,0 +1,24 @@
+package tests;
+
+import org.framework.utils.DBUtils;
+import org.testng.annotations.Test;
+
+import java.util.*;
+
+public class FetchCudProdRelnTest {
+
+    @Test
+    public void fetchCudProdReln() throws Exception {
+        // write any WHERE clause you need
+        String sql = "SELECT * FROM cudprodreln WHERE ROWNUM <= 10";
+
+        List<Map<String,Object>> rows = DBUtils.executeQuery(sql);
+
+        // Print / use the data structure
+        for (Map<String,Object> row : rows) {
+            System.out.println(row);   // each row is Map<column,value>
+        }
+
+        // You now have rows as a List<Map<String,Object>> to validate further
+    }
+}
