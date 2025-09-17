@@ -1,21 +1,60 @@
-import io.github.bonigarcia.wdm.WebDriverManager;
-import org.openqa.selenium.WebDriver;
-import org.openqa.selenium.chrome.ChromeDriver;
+package tests;
 
-public class LaunchURL {
-    public static void main(String[] args) {
-        // Setup ChromeDriver automatically
-        WebDriverManager.chromedriver().setup();
+import org.framework.utils.ExcelUtils;
+import org.framework.utils.JwtFetcher;
+import org.framework.base.BaseApiClient;
 
-        // Launch Chrome
-        WebDriver driver = new ChromeDriver();
+import com.jayway.jsonpath.JsonPath;
 
-        // Navigate to site
-        driver.get("https://myworkspace-uk-dev.euw2.pre-prod.aws.cloud.hsbc/sso_uk/gru.html");
+import java.util.*;
 
-        // TODO: add automation steps (click Submit etc.)
+public class CustomerAccountTest {
 
-        // Close browser
-        driver.quit();
+    public static void main(String[] args) throws Exception {
+        String excel = System.getProperty("user.dir") + "/TestData.xlsx";
+        String custNo = ExcelUtils.readSheet(excel, "TestCases")
+                                  .get(0)
+                                  .get("CustomerIdentificationNumber");
+
+        // --- JWT & API call ---
+        String username = ExcelUtils.readSheet(excel, "Auth").get(0).get("Username");
+        String jwt = JwtFetcher.fetchJwt(username);
+
+        Map<String,String> headers = Map.of(
+            "Authorization", "Bearer " + jwt,
+            "Content-Type", "application/json"
+        );
+
+        BaseApiClient client = new BaseApiClient();
+        String body = client.get("https://your-api-url", headers, null).body;
+
+        // --- Build API set: one simple String per record ---
+        Set<String> apiSet = new HashSet<>();
+        List<Map<String,Object>> accounts = JsonPath.read(body, "$..accountInformationList[*]");
+        for (Map<String,Object> acc : accounts) {
+            String prodCode = String.valueOf(acc.get("productCode")).trim();
+            Map<String,Object> details = (Map<String,Object>) acc.get("accountDetails");
+            String sortCode = String.valueOf(details.get("sortCode")).trim();
+            String acctNum  = String.valueOf(details.get("accountNumber")).trim();
+            String prodId   = sortCode + acctNum;
+            apiSet.add(custNo + "|" + prodId + "|" + prodCode);
+        }
+
+        // --- Fetch DB set in the same simple format ---
+        Set<String> dbSet = DbFetchHelper.fetchCustomerProductsAsStrings(custNo);
+
+        // --- Compare ---
+        System.out.println("DB : " + dbSet);
+        System.out.println("API: " + apiSet);
+        if (apiSet.equals(dbSet)) {
+            System.out.println("Validation PASS");
+        } else {
+            System.out.println("Validation FAIL");
+            // optional: show differences
+            Set<String> missing = new HashSet<>(dbSet); missing.removeAll(apiSet);
+            Set<String> extra   = new HashSet<>(apiSet); extra.removeAll(dbSet);
+            System.out.println("Missing in API: " + missing);
+            System.out.println("Extra in API  : " + extra);
+        }
     }
 }
