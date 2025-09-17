@@ -3,7 +3,7 @@ package tests;
 import org.framework.utils.DBUtils;
 import java.util.*;
 
-public class DbFetchHelper {
+public class DbFetchHelperMinimal {
 
     private static final String QUERY =
         "SELECT CUST_NO, PROD_ID, PROD_COD " +
@@ -12,20 +12,30 @@ public class DbFetchHelper {
         "  AND LENGTH(RTRIM(PROD_ID)) = 14 " +
         "  AND OPEN_CLO_STA = 'O'";
 
+    // Fetch DB rows as list of String arrays: [CUST_NO, PROD_ID, PROD_COD]
+    public static List<String[]> fetchCustomerProducts(String customerNo) throws Exception {
+        List<String[]> result = new ArrayList<>();
+        for (Map<String,Object> row : DBUtils.executeQuery(QUERY, customerNo)) {
+            String[] rec = new String[3];
+            rec[0] = String.valueOf(row.get("CUST_NO")).trim();
+            rec[1] = String.valueOf(row.get("PROD_ID")).trim();
+            rec[2] = String.valueOf(row.get("PROD_COD")).trim();
+            result.add(rec);
+        }
+        return result;
+    }
+
     public static void main(String[] args) throws Exception {
         String customerNo = args.length > 0 ? args[0] : "1104165104";
+        List<String[]> rows = fetchCustomerProducts(customerNo);
 
-        // Directly get rows and print
-        for (Map<String, Object> row : DBUtils.executeQuery(QUERY, customerNo)) {
-            String custNo  = String.valueOf(row.get("CUST_NO")).trim();
-            String prodId  = String.valueOf(row.get("PROD_ID")).trim();
-            String prodCod = String.valueOf(row.get("PROD_COD")).trim();
-
-            System.out.println(
-                "CUST_NO=" + custNo +
-                ", PROD_ID=" + prodId +
-                ", PROD_COD=" + prodCod
-            );
+        if (rows.isEmpty()) {
+            System.out.println("No records found for customer: " + customerNo);
+        } else {
+            System.out.println("Fetched records:");
+            for (String[] rec : rows) {
+                System.out.println(Arrays.toString(rec));
+            }
         }
     }
 }
