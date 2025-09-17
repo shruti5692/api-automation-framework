@@ -1,0 +1,72 @@
+package tests.config;
+
+import org.framework.utils.DataValidator;
+
+import java.util.Map;
+
+/**
+ * Test-specific configuration for Customer Account API.
+ * Contains field mappings, validation rules, and API-specific configurations.
+ */
+public class CustomerAccountConfig {
+    
+    // API Response field mappings (JSON path -> Standard field name)
+    public static final Map<String, String> API_FIELD_MAPPINGS = Map.of(
+        "productCode", "productCode",
+        "accountNumber", "accountNumber", 
+        "sortCode", "sortCode",
+        "accountIn", "accountCin"
+    );
+    
+    // Database field mappings (DB column -> Standard field name)
+    public static final Map<String, String> DB_FIELD_MAPPINGS = Map.of(
+        "productCode", "PRODUCT_CODE",
+        "accountNumber", "ACCOUNT_NUMBER",
+        "sortCode", "SORT_CODE", 
+        "accountIn", "ACCOUNT_CIN"
+    );
+    
+    // Expected JSON field mappings (if different from standard)
+    public static final Map<String, String> EXPECTED_FIELD_MAPPINGS = Map.of(
+        "productCode", "productCode",
+        "accountNumber", "accountNumber",
+        "sortCode", "sortCode", 
+        "accountIn", "accountIn"
+    );
+    
+    // API response array path
+    public static final String API_ARRAY_PATH = "accounts"; // Adjust based on actual API response structure
+    
+    /**
+     * Get configured data validator for account records
+     */
+    public static DataValidator getAccountValidator() {
+        return new DataValidator()
+            .addNormalizer("accountNumber", DataValidator.removeLeadingZeros())
+            .addNormalizer("sortCode", DataValidator.removeLeadingZeros())
+            .addNormalizer("productCode", DataValidator.basicTrim())
+            .addNormalizer("accountIn", DataValidator.basicTrim())
+            .uppercaseFields("productCode", "accountIn")
+            .requireFields("productCode", "accountNumber", "sortCode", "accountIn");
+    }
+    
+    // API endpoint configuration
+    public static class ApiEndpoints {
+        public static final String CUSTOMER_ACCOUNTS_PATH = "/cb-rps-05/gb-hbeu-rps-pod-cust-rel-acct-enq-sct-internal-proxy/v1/cust";
+        public static final String ACCOUNTS_SUFFIX = "/rel-acct";
+        public static final Map<String, String> DEFAULT_QUERY_PARAMS = Map.of("maxAccounts", "0004");
+    }
+    
+    // Headers configuration
+    public static class Headers {
+        public static final String TRUST_TOKEN_HEADER = "X-HSBC-E2E-Trust-Token";
+        public static final String SENSITIVE_DATA_HEADER = "X-HSBC-Sensitive-Data";
+        public static final String CONTENT_TYPE = "Content-Type";
+        public static final String ACCEPT = "Accept";
+        
+        public static final Map<String, String> DEFAULT_HEADERS = Map.of(
+            CONTENT_TYPE, "application/json",
+            ACCEPT, "application/json"
+        );
+    }
+}
