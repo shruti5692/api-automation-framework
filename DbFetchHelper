@@ -1,27 +1,51 @@
 package tests;
 
 import org.framework.utils.DBUtils;
+
 import java.util.*;
 
-/**
- * Builds and runs the CUD_PROD_RELN query and returns
- * Set of PROD_ID (concatenated sortCode + accountNumber)
- */
 public class DbFetchHelper {
 
+    // ✅ Use correct schema/table and DB2 syntax
     private static final String QUERY =
         "SELECT CUST_NO, RTRIM(PROD_ID) AS PROD_ID, PROD_COD " +
-        "FROM CUD_PROD_RELN " +
-        "WHERE CUST_NO = ? " +
-        "  AND LENGTH(RTRIM(PROD_ID)) = 14 " +
-        "  AND OPEN_CLO_STA = 'O'";
+        "FROM INTST02.CUD_PROD_RELN " +
+        "WHERE CUST_NO = ?";
 
-    public static Set<String> fetchProdIds(String customerNumber) throws Exception {
-        List<Map<String,Object>> rows = DBUtils.executeQuery(QUERY, customerNumber);
-        Set<String> out = new HashSet<>();
-        for (Map<String,Object> r : rows) {
-            out.add(String.valueOf(r.get("PROD_ID")).trim());
+    /**
+     * Fetch customer products and return a Set of Map rows.
+     */
+    public static Set<Map<String, String>> fetchCustomerProducts(String customerNumber) throws Exception {
+        List<Map<String, Object>> rows = DBUtils.executeQuery(QUERY, customerNumber);
+        Set<Map<String, String>> result = new HashSet<>();
+
+        for (Map<String, Object> row : rows) {
+            Map<String, String> normalized = new HashMap<>();
+            // ✅ Ensure we use the exact aliases / column names from the query
+            normalized.put("CUST_NO",  String.valueOf(row.get("CUST_NO")));
+            normalized.put("PROD_ID",  String.valueOf(row.get("PROD_ID")));
+            normalized.put("PROD_COD", String.valueOf(row.get("PROD_COD")));
+            result.add(normalized);
         }
-        return out;
+        return result;
+    }
+
+    /**
+     * Quick test runner – run this file directly.
+     */
+    public static void main(String[] args) throws Exception {
+        // Replace with an actual customer number that exists in your DB
+        String testCustomerNo = "1104165104";
+
+        Set<Map<String, String>> result = fetchCustomerProducts(testCustomerNo);
+
+        if (result.isEmpty()) {
+            System.out.println("No rows found for customer: " + testCustomerNo);
+        } else {
+            System.out.println("Rows fetched:");
+            for (Map<String, String> r : result) {
+                System.out.println(r);
+            }
+        }
     }
 }
