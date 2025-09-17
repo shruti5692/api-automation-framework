@@ -1,69 +1,40 @@
 package org.framework.utils;
 
 import org.framework.config.ConfigManager;
-
 import java.sql.*;
 import java.util.*;
 
-/**
- * Generic DB helper. Reads driver/url/user/pass from config.properties.
- * Also offers a convenience method for CUD_PROD_RELN.
- */
-public final class DBUtils {
+public class DBUtils {
 
-    private static final String DRIVER = ConfigManager.get("db.driver");
-    private static final String URL = buildUrl();
-    private static final String USER = ConfigManager.get("db.user");
-    private static final String PASS = ConfigManager.get("db.password");
-
-    static {
-        if (DRIVER != null && !DRIVER.isBlank()) {
-            try { Class.forName(DRIVER); } catch (ClassNotFoundException e) {
-                System.err.println("[DBUtils] Driver class not found: " + DRIVER + " -> " + e.getMessage());
-            }
-        }
+    private static Connection getConnection() throws Exception {
+        String url  = ConfigManager.get("db.url");
+        String user = ConfigManager.get("db.user");
+        String pass = ConfigManager.get("db.password");
+        Class.forName("com.ibm.db2.jcc.DB2Driver");
+        return DriverManager.getConnection(url, user, pass);
     }
 
-    private DBUtils() {}
+    /** Execute any SELECT and return List of Map<column,value>. */
+    public static List<Map<String,Object>> executeQuery(String sql, Object... params) throws Exception {
+        try (Connection con = getConnection();
+             PreparedStatement ps = con.prepareStatement(sql)) {
 
-    private static String buildUrl() {
-        String explicit = ConfigManager.get("db.url");
-        if (explicit != null && !explicit.isBlank()) return explicit;
-        String host = ConfigManager.get("db.host", "localhost");
-        String port = ConfigManager.get("db.port", "50000");
-        String db = ConfigManager.get("db.database", "INTST02");
-        return "jdbc:db2://" + host + ":" + port + "/" + db;
-    }
+            for (int i=0; i<params.length; i++) ps.setObject(i+1, params[i]);
 
-    public static List<Map<String,Object>> executeQuery(String sql, Object... params) {
-        List<Map<String,Object>> out = new ArrayList<>();
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASS);
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            if (params != null) {
-                for (int i=0;i<params.length;i++) ps.setObject(i+1, params[i]);
-            }
             try (ResultSet rs = ps.executeQuery()) {
+                List<Map<String,Object>> rows = new ArrayList<>();
                 ResultSetMetaData md = rs.getMetaData();
                 int cols = md.getColumnCount();
+
                 while (rs.next()) {
                     Map<String,Object> row = new LinkedHashMap<>();
-                    for (int i=1;i<=cols;i++) row.put(md.getColumnLabel(i), rs.getObject(i));
-                    out.add(row);
+                    for (int c = 1; c <= cols; c++) {
+                        row.put(md.getColumnLabel(c).toLowerCase(), rs.getObject(c));
+                    }
+                    rows.add(row);
                 }
+                return rows;
             }
-        } catch (SQLException e) {
-            throw new RuntimeException("DB query failed: " + e.getMessage(), e);
         }
-        return out;
-    }
-
-    /**
-     * Convenience method for CUD_PROD_RELN.
-     * Returns list of rows (columns returned: PRODUCT_CODE, ACCOUNT_NUMBER, SORT_CODE, ACCOUNT_CIN, maybe CURRENCY_CODE).
-     */
-    public static List<Map<String,Object>> fetchCudProdRelnByCin(String accountCin) {
-        String sql = "SELECT PRODUCT_CODE, ACCOUNT_NUMBER, SORT_CODE, ACCOUNT_CIN, CURRENCY_CODE FROM CUD_PROD_RELN WHERE ACCOUNT_CIN = ?";
-        return executeQuery(sql, accountCin);
     }
 }
