@@ -5,7 +5,6 @@ import java.util.*;
 
 public class DbFetchHelper {
 
-    // Query verified in DBeaver
     private static final String QUERY =
         "SELECT CUST_NO, PROD_ID, PROD_COD " +
         "FROM INTST02.CUD_PROD_RELN " +
@@ -14,23 +13,30 @@ public class DbFetchHelper {
         "  AND OPEN_CLO_STA = 'O'";
 
     /**
-     * Returns each row as "CUST_NO|PROD_ID|PROD_COD"
-     * with PROD_ID already trimmed.
+     * Fetch rows and return as "CUST_NO|PROD_ID|PROD_COD".
+     * Works regardless of DB column key case.
      */
     public static Set<String> fetchCustomerProducts(String customerNumber) throws Exception {
         List<Map<String,Object>> rows = DBUtils.executeQuery(QUERY, customerNumber);
-
         Set<String> result = new HashSet<>();
+
         for (Map<String,Object> row : rows) {
-            String cust   = String.valueOf(row.get("CUST_NO")).trim();
-            String prodId = String.valueOf(row.get("PROD_ID")).trim(); // trim spaces
-            String prodCd = String.valueOf(row.get("PROD_COD")).trim();
+            Map<String,Object> normalizedRow = new HashMap<>();
+            // normalize all keys to uppercase
+            for (Map.Entry<String,Object> e : row.entrySet()) {
+                normalizedRow.put(e.getKey().toUpperCase(), e.getValue());
+            }
+
+            String cust   = String.valueOf(normalizedRow.get("CUST_NO")).trim();
+            String prodId = String.valueOf(normalizedRow.get("PROD_ID")).trim();
+            String prodCd = String.valueOf(normalizedRow.get("PROD_COD")).trim();
+
             result.add(cust + "|" + prodId + "|" + prodCd);
         }
+
         return result;
     }
 
-    // Quick standalone run for testing
     public static void main(String[] args) throws Exception {
         String customerNo = args.length > 0 ? args[0] : "1104165104";
         Set<String> records = fetchCustomerProducts(customerNo);
