@@ -1,50 +1,63 @@
 package tests;
 
-import org.framework.utils.DBUtils;
+import org.framework.utils.DBUtils;   // <-- your existing connection helper
+
 import java.util.*;
 
 public class DbFetchHelper {
 
-    // keep the query simple—no RTRIM, no aliasing
+    // Same SQL that works in DBeaver
     private static final String QUERY =
         "SELECT CUST_NO, PROD_ID, PROD_COD " +
         "FROM INTST02.CUD_PROD_RELN " +
-        "WHERE CUST_NO = ?";
+        "WHERE CUST_NO = ? " +
+        "  AND LENGTH(RTRIM(PROD_ID)) = 14 " +
+        "  AND OPEN_CLO_STA = 'O'";
 
     /**
-     * Fetch customer rows as a list of simple String arrays
-     *   [CUST_NO, PROD_ID, PROD_COD]
+     * Fetch rows and return them as a Set of Maps
+     * Keys will be whatever column labels the driver returns.
      */
-    public static List<String[]> fetchCustomerProducts(String customerNumber) throws Exception {
-        List<Map<String, Object>> rows = DBUtils.executeQuery(QUERY, customerNumber);
-        List<String[]> result = new ArrayList<>();
+    public static Set<Map<String,String>> fetchCustomerProducts(String customerNumber) throws Exception {
+        List<Map<String,Object>> rows = DBUtils.executeQuery(QUERY, customerNumber);
 
-        for (Map<String, Object> row : rows) {
-            // use the DB column names exactly as they appear in the table
-            String custNo  = toStr(row.get("CUST_NO"));
-            String prodId  = toStr(row.get("PROD_ID"));
-            String prodCod = toStr(row.get("PROD_COD"));
-            result.add(new String[]{custNo, prodId, prodCod});
+        // Print keys once so you know the exact names/case
+        if (!rows.isEmpty()) {
+            System.out.println("Column labels from driver: " + rows.get(0).keySet());
+        } else {
+            System.out.println("No rows returned for customer: " + customerNumber);
+        }
+
+        Set<Map<String,String>> result = new HashSet<>();
+        for (Map<String,Object> row : rows) {
+            Map<String,String> normalized = new HashMap<>();
+            // Convert every column to String with its actual key
+            for (Map.Entry<String,Object> e : row.entrySet()) {
+                normalized.put(e.getKey(), e.getValue() == null ? "" : e.getValue().toString().trim());
+            }
+            result.add(normalized);
         }
         return result;
     }
 
-    private static String toStr(Object o) {
-        return o == null ? "" : o.toString().trim();
-    }
-
-    /** Quick test */
+    /**
+     * Simple main method so you can run and test this class alone.
+     * Pass the customer number you want to check as a program argument
+     * or edit the default value below.
+     */
     public static void main(String[] args) throws Exception {
-        // replace with an actual customer number from your DB
-        String customerNo = "1104165104";
+        // Replace or pass as command-line arg
+        String customerNo = args.length > 0 ? args[0] : "1104165104";
 
-        List<String[]> records = fetchCustomerProducts(customerNo);
+        System.out.println("Fetching records for customer: " + customerNo);
+        Set<Map<String,String>> records = fetchCustomerProducts(customerNo);
+
         if (records.isEmpty()) {
-            System.out.println("No records found for: " + customerNo);
+            System.out.println("No records found.");
         } else {
-            for (String[] r : records) {
-                System.out.printf("CUST_NO=%s | PROD_ID=%s | PROD_COD=%s%n",
-                                  r[0], r[1], r[2]);
+            System.out.println("Fetched rows:");
+            for (Map<String,String> rec : records) {
+                System.out.println(rec);
             }
         }
     }
