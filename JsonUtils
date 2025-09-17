@@ -1,51 +1,126 @@
-package com.framework.utils;
+package org.framework.utils;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.*;
+import org.framework.model.AccountRecord;
 
-import java.util.Iterator;
-import java.util.Map;
+import java.util.*;
 
 /**
- * Walks a JSON structure and decrypts any textual value of form ENC(<base64>).
- * This keeps RequestBody JSON editable in Excel while allowing encrypted placeholders.
+ * Helpers to parse API JSON into AccountRecord list and parse expected JSON (Excel).
  */
-public class JsonUtils {
-    private static final ObjectMapper mapper = new ObjectMapper();
+public final class JsonUtils {
 
-    public static String decryptEmbeddedValues(String jsonString) throws Exception {
-        if (jsonString == null || jsonString.trim().isEmpty()) return jsonString;
-        JsonNode root = mapper.readTree(jsonString);
-        JsonNode processed = processNode(root);
-        return mapper.writeValueAsString(processed);
+    private static final ObjectMapper M = new ObjectMapper();
+
+    private JsonUtils() {}
+
+    public static List<AccountRecord> extractAccountRecordsFromApi(String json) {
+        List<AccountRecord> out = new ArrayList<>();
+        try {
+            JsonNode root = M.readTree(json);
+            // try to find accountInformationList nodes
+            Iterator<JsonNode> lists = root.findValues("accountInformationList").iterator();
+            while (lists.hasNext()) {
+                JsonNode arr = lists.next();
+                if (arr.isArray()) {
+                    for (JsonNode item : arr) {
+                        parseAccountNode(item, out);
+                    }
+                }
+            }
+            // fallback: find "accountDetails" nodes
+            Iterator<JsonNode> details = root.findValues("accountDetails").iterator();
+            while (details.hasNext()) {
+                JsonNode d = details.next();
+                String accountNumber = safeText(d, "accountNumber");
+                String sortCode = safeText(d, "sortCode");
+                // try parent for productCode/accountCin
+                JsonNode parent = d;
+                // We cannot reliably get parent with Jackson; search nearest productCode and accountCin in ancestor search is complex.
+                // We attempt to glean from surrounding nodes using findParents above already. If empty, create minimal record.
+                out.add(new AccountRecord("", accountNumber, sortCode, ""));
+            }
+        } catch (Exception e) {
+            System.err.println("[JsonUtils] error parsing api json: " + e.getMessage());
+        }
+        return out;
     }
 
-    private static JsonNode processNode(JsonNode node) throws Exception {
-        if (node.isObject()) {
-            ObjectNode obj = (ObjectNode) node;
-            Iterator<Map.Entry<String, JsonNode>> fields = obj.fields();
-            while (fields.hasNext()) {
-                Map.Entry<String, JsonNode> e = fields.next();
-                obj.set(e.getKey(), processNode(e.getValue()));
-            }
-            return obj;
-        } else if (node.isArray()) {
-            ArrayNode arr = (ArrayNode) node;
-            for (int i = 0; i < arr.size(); i++) {
-                arr.set(i, processNode(arr.get(i)));
-            }
-            return arr;
-        } else if (node.isTextual()) {
-            String text = node.asText();
-            if (text.startsWith("ENC(") && text.endsWith(")")) {
-                String decrypted = CryptoUtils.resolve(text);
-                return new TextNode(decrypted);
+    private static void parseAccountNode(JsonNode item, List<AccountRecord> out) {
+        try {
+            String productCode = safeText(item, "productCode");
+            String accountCin = safeText(item, "accountCin");
+            String accountNumber = "";
+            String sortCode = "";
+            if (item.has("accountDetails")) {
+                JsonNode det = item.get("accountDetails");
+                accountNumber = safeText(det, "accountNumber");
+                sortCode = safeText(det, "sortCode");
             } else {
-                return node;
+                accountNumber = safeText(item, "accountNumber");
+                sortCode = safeText(item, "sortCode");
             }
-        } else {
-            return node;
+            out.add(new AccountRecord(productCode, accountNumber, sortCode, accountCin));
+        } catch (Exception ignored) {}
+    }
+
+    private static String safeText(JsonNode n, String field) {
+        if (n == null || !n.has(field) || n.get(field).isNull()) return "";
+        return n.get(field).asText("");
+    }
+
+    /**
+     * Parse Excel ExpectedOutput JSON (array of objects with productCode, accountNumber, sortCode, accountIn)
+     */
+    public static List<AccountRecord> parseExpectedRecords(String expectedJson) {
+        List<AccountRecord> out = new ArrayList<>();
+        if (expectedJson == null || expectedJson.isBlank()) return out;
+        try {
+            JsonNode arr = M.readTree(expectedJson);
+            if (!arr.isArray()) return out;
+            for (JsonNode it : arr) {
+                String pc = safeText(it, "productCode");
+                String an = safeText(it, "accountNumber");
+                String sc = safeText(it, "sortCode");
+                String ai = safeText(it, "accountIn"); // tester might have accountIn or accountCin; try alternative
+                if (ai.isEmpty()) ai = safeText(it, "accountCin");
+                if (ai.isEmpty()) ai = safeText(it, "currencyCode");
+                out.add(new AccountRecord(pc, an, sc, ai));
+            }
+        } catch (Exception e) {
+            System.err.println("[JsonUtils] parseExpectedRecords failed: " + e.getMessage());
         }
+        return out;
+    }
+
+    /**
+     * Convert DB rows (Map<String,Object>) into AccountRecord list.
+     * It performs key-insensitive lookup for common column names.
+     */
+    public static List<AccountRecord> fromDbRows(List<Map<String,Object>> rows) {
+        List<AccountRecord> out = new ArrayList<>();
+        if (rows == null) return out;
+        for (Map<String,Object> r : rows) {
+            String productCode = getStringCaseInsensitive(r, "PRODUCT_CODE", "product_code", "productCode");
+            String accountNumber = getStringCaseInsensitive(r, "ACCOUNT_NUMBER", "account_number", "accountNumber");
+            String sortCode = getStringCaseInsensitive(r, "SORT_CODE", "sort_code", "sortCode");
+            String accountCin = getStringCaseInsensitive(r, "ACCOUNT_CIN", "account_cin", "accountCin");
+            if (accountCin.isEmpty()) accountCin = getStringCaseInsensitive(r, "CURRENCY_CODE", "currency_code", "currencyCode");
+            out.add(new AccountRecord(productCode, accountNumber, sortCode, accountCin));
+        }
+        return out;
+    }
+
+    private static String getStringCaseInsensitive(Map<String,Object> map, String... keys) {
+        for (String k : keys) {
+            for (String mk : map.keySet()) {
+                if (mk.equalsIgnoreCase(k)) {
+                    Object v = map.get(mk);
+                    return v == null ? "" : String.valueOf(v);
+                }
+            }
+        }
+        return "";
     }
 }
