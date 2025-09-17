@@ -1,50 +1,50 @@
 package tests;
 
 import org.framework.utils.DBUtils;
-
 import java.util.*;
 
 public class DbFetchHelper {
 
-    // ✅ Use correct schema/table and DB2 syntax
+    // keep the query simple—no RTRIM, no aliasing
     private static final String QUERY =
-        "SELECT CUST_NO, RTRIM(PROD_ID) AS PROD_ID, PROD_COD " +
+        "SELECT CUST_NO, PROD_ID, PROD_COD " +
         "FROM INTST02.CUD_PROD_RELN " +
         "WHERE CUST_NO = ?";
 
     /**
-     * Fetch customer products and return a Set of Map rows.
+     * Fetch customer rows as a list of simple String arrays
+     *   [CUST_NO, PROD_ID, PROD_COD]
      */
-    public static Set<Map<String, String>> fetchCustomerProducts(String customerNumber) throws Exception {
+    public static List<String[]> fetchCustomerProducts(String customerNumber) throws Exception {
         List<Map<String, Object>> rows = DBUtils.executeQuery(QUERY, customerNumber);
-        Set<Map<String, String>> result = new HashSet<>();
+        List<String[]> result = new ArrayList<>();
 
         for (Map<String, Object> row : rows) {
-            Map<String, String> normalized = new HashMap<>();
-            // ✅ Ensure we use the exact aliases / column names from the query
-            normalized.put("CUST_NO",  String.valueOf(row.get("CUST_NO")));
-            normalized.put("PROD_ID",  String.valueOf(row.get("PROD_ID")));
-            normalized.put("PROD_COD", String.valueOf(row.get("PROD_COD")));
-            result.add(normalized);
+            // use the DB column names exactly as they appear in the table
+            String custNo  = toStr(row.get("CUST_NO"));
+            String prodId  = toStr(row.get("PROD_ID"));
+            String prodCod = toStr(row.get("PROD_COD"));
+            result.add(new String[]{custNo, prodId, prodCod});
         }
         return result;
     }
 
-    /**
-     * Quick test runner – run this file directly.
-     */
+    private static String toStr(Object o) {
+        return o == null ? "" : o.toString().trim();
+    }
+
+    /** Quick test */
     public static void main(String[] args) throws Exception {
-        // Replace with an actual customer number that exists in your DB
-        String testCustomerNo = "1104165104";
+        // replace with an actual customer number from your DB
+        String customerNo = "1104165104";
 
-        Set<Map<String, String>> result = fetchCustomerProducts(testCustomerNo);
-
-        if (result.isEmpty()) {
-            System.out.println("No rows found for customer: " + testCustomerNo);
+        List<String[]> records = fetchCustomerProducts(customerNo);
+        if (records.isEmpty()) {
+            System.out.println("No records found for: " + customerNo);
         } else {
-            System.out.println("Rows fetched:");
-            for (Map<String, String> r : result) {
-                System.out.println(r);
+            for (String[] r : records) {
+                System.out.printf("CUST_NO=%s | PROD_ID=%s | PROD_COD=%s%n",
+                                  r[0], r[1], r[2]);
             }
         }
     }
