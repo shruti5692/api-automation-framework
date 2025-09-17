@@ -1,0 +1,32 @@
+package tests;
+
+import org.framework.utils.DBUtils;
+import java.util.*;
+
+/**
+ * Helper dedicated to this API test.
+ * Builds the query for CUD_PROD_RELN and returns a Set of Maps
+ * with keys: CUST_NO, PROD_ID, PROD_COD.
+ */
+public class DbFetchHelper {
+
+    private static final String QUERY =
+        "SELECT CUST_NO, PROD_ID, PROD_COD " +
+        "FROM CUD_PROD_RELN " +
+        "WHERE CUST_NO = ? " +
+        "  AND LENGTH(PROD_ID) = 14 " +
+        "  AND OPEN_CLO_STA = 'O'";
+
+    public static Set<Map<String,String>> fetchCustomerProducts(String customerNumber) throws Exception {
+        List<Map<String,Object>> rows = DBUtils.executeQuery(QUERY, customerNumber);
+        Set<Map<String,String>> result = new HashSet<>();
+        for (Map<String,Object> row : rows) {
+            Map<String,String> normalized = new HashMap<>();
+            normalized.put("CUST_NO", String.valueOf(row.get("CUST_NO")));
+            normalized.put("PROD_ID", String.valueOf(row.get("PROD_ID")));
+            normalized.put("PROD_COD", String.valueOf(row.get("PROD_COD")));
+            result.add(normalized);
+        }
+        return result;
+    }
+}
