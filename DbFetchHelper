@@ -1,40 +1,64 @@
 package tests;
 
 import org.framework.utils.DBUtils;
-import java.util.*;
 
-public class DbFetchHelperMinimal {
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
+/**
+ * Minimal helper to fetch customer products from CUD_PROD_RELN.
+ */
+public class DbFetchHelper {
+
+    // Query that works in DBeaver
     private static final String QUERY =
-        "SELECT CUST_NO, PROD_ID, PROD_COD " +
-        "FROM INTST02.CUD_PROD_RELN " +
-        "WHERE CUST_NO = ? " +
-        "  AND LENGTH(RTRIM(PROD_ID)) = 14 " +
-        "  AND OPEN_CLO_STA = 'O'";
+            "SELECT CUST_NO, PROD_ID, PROD_COD " +
+            "FROM INTST02.CUD_PROD_RELN " +
+            "WHERE CUST_NO = ? " +
+            "  AND LENGTH(RTRIM(PROD_ID)) = 14 " +
+            "  AND OPEN_CLO_STA = 'O'";
 
-    // Fetch DB rows as list of String arrays: [CUST_NO, PROD_ID, PROD_COD]
+    /**
+     * Fetch customer product records.
+     * Returns List of String arrays: [CUST_NO, PROD_ID, PROD_COD]
+     */
     public static List<String[]> fetchCustomerProducts(String customerNo) throws Exception {
         List<String[]> result = new ArrayList<>();
-        for (Map<String,Object> row : DBUtils.executeQuery(QUERY, customerNo)) {
+        List<Map<String, Object>> rows = DBUtils.executeQuery(QUERY, customerNo);
+
+        for (Map<String, Object> row : rows) {
+            // Normalize keys to uppercase to avoid nulls
+            Map<String, Object> normalized = new HashMap<>();
+            for (Map.Entry<String, Object> e : row.entrySet()) {
+                normalized.put(e.getKey().toUpperCase(), e.getValue());
+            }
+
             String[] rec = new String[3];
-            rec[0] = String.valueOf(row.get("CUST_NO")).trim();
-            rec[1] = String.valueOf(row.get("PROD_ID")).trim();
-            rec[2] = String.valueOf(row.get("PROD_COD")).trim();
+            rec[0] = String.valueOf(normalized.get("CUST_NO"));
+            rec[1] = String.valueOf(normalized.get("PROD_ID"));
+            rec[2] = String.valueOf(normalized.get("PROD_COD"));
+
             result.add(rec);
         }
         return result;
     }
 
+    /**
+     * Simple main to test this helper independently.
+     */
     public static void main(String[] args) throws Exception {
         String customerNo = args.length > 0 ? args[0] : "1104165104";
-        List<String[]> rows = fetchCustomerProducts(customerNo);
 
-        if (rows.isEmpty()) {
+        List<String[]> records = fetchCustomerProducts(customerNo);
+
+        if (records.isEmpty()) {
             System.out.println("No records found for customer: " + customerNo);
         } else {
             System.out.println("Fetched records:");
-            for (String[] rec : rows) {
-                System.out.println(Arrays.toString(rec));
+            for (String[] rec : records) {
+                System.out.println("CUST_NO=" + rec[0] + ", PROD_ID=" + rec[1] + ", PROD_COD=" + rec[2]);
             }
         }
     }
