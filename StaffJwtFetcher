@@ -1,67 +1,77 @@
-package org.framework.utils;
+ package org.framework.utils;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
-import org.json.JSONObject;
+import org.framework.config.ConfigManager;
 
-public class StaffJwtFetcher {
+import java.io.IOException;
+import java.util.Map;
 
-    private static final OkHttpClient client = new OkHttpClient();
+/**
+ * Fetches JWT via SSO authenticate -> tokenTranslator (translate) flow.
+ * Reads endpoints from config.properties.
+ */
+public final class JwtFetcher {
 
-    public static void main(String[] args) {
-        try {
-            String jwt = fetchJwt("45453759", "TestTree");
-            System.out.println("✅ JWT Token: " + jwt);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
+    private static final OkHttpClient client = new OkHttpClient.Builder().build();
+    private static final ObjectMapper M = new ObjectMapper();
 
-    public static String fetchJwt(String username, String authIndexValue) throws Exception {
+    private JwtFetcher() {}
 
-        // ---------- 1️⃣ First call: Get SSO token ----------
-        String ssoUrl = "https://cmb-staff-dsp-uat.hk.hsbc:8443/dsp/json/realms/root/realms/staff/authenticate"
-                + "?authIndexType=service&authIndexValue=" + authIndexValue;
+    public static String fetchJwt(String username) throws IOException {
+        if (username == null || username.isBlank()) throw new IllegalArgumentException("username required");
 
-        Request ssoRequest = new Request.Builder()
+        String ssoBase = ConfigManager.get("sso.authenticate.url");
+        String ssoAuthIndex = ConfigManager.get("sso.auth.index", "TestTree"); // static per requirement
+        String ssoUrl = ssoBase.contains("?") ? ssoBase + "&authIndexValue=" + ssoAuthIndex : ssoBase + "?authIndexValue=" + ssoAuthIndex;
+        String acceptApi = ConfigManager.get("sso.accept-api-version", "protocol=1.0,resource=2.1");
+        String translateUrl = ConfigManager.get("sso.translate.url");
+
+        // 1) authenticate to get tokenId (SSO token)
+        Request ssoReq = new Request.Builder()
                 .url(ssoUrl)
-                .post(RequestBody.create(new byte[0])) // empty body
+                .post(RequestBody.create(new byte[0]))
                 .addHeader("X-OpenAM-Username", username)
-                .addHeader("Accept-API-Version", "protocol=1.0,resource=2.1")
+                .addHeader("Accept-API-Version", acceptApi)
                 .addHeader("Content-Type", "application/json")
                 .build();
 
-        Response ssoResponse = client.newCall(ssoRequest).execute();
-        if (!ssoResponse.isSuccessful()) {
-            throw new RuntimeException("❌ SSO request failed: " + ssoResponse.code());
+        try (Response ssoResp = client.newCall(ssoReq).execute()) {
+            if (!ssoResp.isSuccessful()) throw new IOException("SSO authenticate failed: " + ssoResp.code());
+            String ssoBody = ssoResp.body() != null ? ssoResp.body().string() : "";
+            JsonNode ssoJson = M.readTree(ssoBody);
+            String tokenId = null;
+            if (ssoJson.has("tokenId")) tokenId = ssoJson.get("tokenId").asText();
+            else if (ssoJson.has("token") && ssoJson.get("token").has("tokenId"))
+                tokenId = ssoJson.get("token").get("tokenId").asText();
+            if (tokenId == null || tokenId.isBlank()) throw new IOException("SSO response missing tokenId. Body: " + ssoBody);
+            System.out.println("[JwtFetcher] SSO tokenId: " + tokenId);
+
+            // 2) translate to JWT
+            Map<String,Object> root = Map.of(
+                    "input_token_state", Map.of("token_type", "SSOTOKEN", "tokenId", tokenId),
+                    "output_token_state", Map.of("token_type", "JWT")
+            );
+            String translateBody = M.writeValueAsString(root);
+            Request trReq = new Request.Builder()
+                    .url(translateUrl)
+                    .post(RequestBody.create(translateBody, MediaType.parse("application/json")))
+                    .addHeader("Content-Type", "application/json")
+                    .build();
+
+            try (Response trResp = client.newCall(trReq).execute()) {
+                if (!trResp.isSuccessful()) throw new IOException("Translate failed: " + trResp.code());
+                String trBody = trResp.body() != null ? trResp.body().string() : "";
+                JsonNode trJson = M.readTree(trBody);
+                String jwt = null;
+                if (trJson.has("issued_token")) jwt = trJson.get("issued_token").asText();
+                else if (trJson.has("token") && trJson.get("token").has("issued_token"))
+                    jwt = trJson.get("token").get("issued_token").asText();
+                if (jwt == null || jwt.isBlank()) throw new IOException("Translate response missing issued_token. Body: " + trBody);
+                System.out.println("[JwtFetcher] JWT length=" + jwt.length());
+                return jwt;
+            }
         }
-
-        String ssoJson = ssoResponse.body().string();
-        String tokenId = new JSONObject(ssoJson).getString("tokenId");
-        System.out.println("🔹 SSO tokenId: " + tokenId);
-
-        // ---------- 2️⃣ Second call: Translate to JWT ----------
-        String translateUrl = "https://cmb-staff-dsp-uat.hk.hsbc:8443/dsp/rest-sts/staff/tokenTranslator?_action=translate";
-
-        JSONObject bodyJson = new JSONObject()
-                .put("input_token_state", new JSONObject()
-                        .put("token_type", "SSOTOKEN")
-                        .put("tokenId", tokenId))
-                .put("output_token_state", new JSONObject()
-                        .put("token_type", "JWT"));
-
-        Request translateRequest = new Request.Builder()
-                .url(translateUrl)
-                .post(RequestBody.create(bodyJson.toString(), MediaType.parse("application/json")))
-                .addHeader("Content-Type", "application/json")
-                .build();
-
-        Response translateResponse = client.newCall(translateRequest).execute();
-        if (!translateResponse.isSuccessful()) {
-            throw new RuntimeException("❌ Translate request failed: " + translateResponse.code());
-        }
-
-        String translateJson = translateResponse.body().string();
-        String jwt = new JSONObject(translateJson).getString("issued_token");
-        return jwt;
     }
 }
