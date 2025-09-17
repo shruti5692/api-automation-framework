@@ -1,16 +1,37 @@
-package com.framework.core;
+package org.framework.config;
 
-import java.util.Properties;
 import java.io.InputStream;
+import java.util.Properties;
 
-public class ConfigManager {
+/**
+ * Simple config loader. Loads config.properties from classpath.
+ */
+public final class ConfigManager {
     private static final Properties props = new Properties();
+
     static {
-        try (InputStream in = ConfigManager.class
-                .getClassLoader()
+        try (InputStream in = ConfigManager.class.getClassLoader()
                 .getResourceAsStream("config.properties")) {
-            props.load(in);
-        } catch (Exception e) { throw new RuntimeException(e); }
+            if (in != null) props.load(in);
+            else System.err.println("[ConfigManager] config.properties not found on classpath");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load config.properties", e);
+        }
     }
-    public static String get(String key) { return props.getProperty(key); }
+
+    private ConfigManager() {}
+
+    public static String get(String key) {
+        String v = props.getProperty(key);
+        return v == null ? "" : v.trim();
+    }
+
+    public static String get(String key, String defaultValue) {
+        String v = props.getProperty(key);
+        return (v == null || v.isBlank()) ? defaultValue : v.trim();
+    }
+
+    public static int getInt(String key, int defaultValue) {
+        try { return Integer.parseInt(props.getProperty(key)); } catch (Exception e) { return defaultValue; }
+    }
 }
