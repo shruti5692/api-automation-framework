@@ -2,8 +2,8 @@ package tests;
 
 import org.framework.base.BaseApiClient;
 import org.framework.config.ConfigManager;
-import org.framework.model.AccountRecord;
 import org.framework.utils.*;
+import tests.config.CustomerAccountConfig;
 
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
@@ -12,20 +12,17 @@ import org.testng.annotations.Test;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
- * TestNG test - one test per TestCases Excel row (DataProvider).
- * Excel location: project root /TestData.xlsx (see EXCEL_PATH below).
+ * TestNG test for Customer Account API - now using generic data structures
+ * instead of specific model classes.
  */
 public class CustomerAccountTest {
 
-    // Put TestData.xlsx at project root to allow writing back easily:
     private static final String EXCEL_PATH = System.getProperty("user.dir") + "/TestData.xlsx";
     private static final String AUTH_SHEET = "Auth";
     private static final String CASE_SHEET = "TestCases";
 
-    // In-memory store of full responses for debugging
     private final List<String> fullResponses = Collections.synchronizedList(new ArrayList<>());
 
     @DataProvider(name = "cases")
@@ -44,7 +41,8 @@ public class CustomerAccountTest {
         String expectedJson = row.getOrDefault("ExpectedOutput", "");
 
         if (testCaseId.isBlank()) throw new IllegalArgumentException("TestCaseID missing in Excel row");
-        // get username from Auth sheet (use first row)
+        
+        // Get username from Auth sheet
         List<Map<String,String>> auth = ExcelUtils.readSheet(EXCEL_PATH, AUTH_SHEET);
         if (auth.isEmpty()) throw new IllegalStateException("Auth sheet empty");
         String username = auth.get(0).getOrDefault("Username", auth.get(0).getOrDefault("username",""));
@@ -52,36 +50,32 @@ public class CustomerAccountTest {
 
         String result = "FAIL: unknown error";
         try {
-            // parse headers JSON (Excel will have a JSON object string)
+            // Parse headers JSON
             Map<String,String> headers = parseHeaders(headersJson);
 
-            // fetch jwt dynamically for this username
+            // Fetch JWT dynamically
             String jwt = JwtFetcher.fetchJwt(username);
-            headers.put("X-HSBC-E2E-Trust-Token", jwt);
+            headers.put(CustomerAccountConfig.Headers.TRUST_TOKEN_HEADER, jwt);
 
-            // sensitive data header built using config's sensitive.key and customer cin
+            // Build sensitive data header
             String sensitiveKey = ConfigManager.get("sensitive.key");
             String sensitiveJson = "[{\"key\":\"" + sensitiveKey + "\",\"value\":\"" + customerCin + "\"}]";
-            headers.put("X-HSBC-Sensitive-Data", sensitiveJson);
+            headers.put(CustomerAccountConfig.Headers.SENSITIVE_DATA_HEADER, sensitiveJson);
 
-            // ensure defaults if missing
-            headers.putIfAbsent("Content-Type", "application/json");
-            headers.putIfAbsent("Accept", "application/json");
+            // Add default headers
+            CustomerAccountConfig.Headers.DEFAULT_HEADERS.forEach(headers::putIfAbsent);
 
-            // build URL
+            // Build URL
             String base = ConfigManager.get("api.base.url");
             String path = ConfigManager.get("api.cust.account.path");
-            // path expected e.g. /cb-rps-05/.../v1/cust
-            String url = base + path + "/" + sensitiveKey + "/rel-acct";
+            String url = base + path + "/" + sensitiveKey + CustomerAccountConfig.ApiEndpoints.ACCOUNTS_SUFFIX;
 
-            // call API
+            // Call API
             BaseApiClient client = new BaseApiClient();
-            Map<String,String> qp = Map.of("maxAccounts", "0004");
-            BaseApiClient.ApiResponse resp = client.get(url, headers, qp);
+            BaseApiClient.ApiResponse resp = client.get(url, headers, CustomerAccountConfig.ApiEndpoints.DEFAULT_QUERY_PARAMS);
 
-            // store response
+            // Store response
             fullResponses.add(resp.body);
-            // write file
             Path outDir = Paths.get("target/apiResponses");
             Files.createDirectories(outDir);
             Files.writeString(outDir.resolve(testCaseId + ".json"), resp.body, StandardCharsets.UTF_8);
@@ -92,44 +86,60 @@ public class CustomerAccountTest {
                 Assert.fail(result);
             }
 
-            // parse API records
-            List<AccountRecord> apiRecords = JsonUtils.extractAccountRecordsFromApi(resp.body);
-            // parse expected records from Excel
-            List<AccountRecord> expectedRecords = JsonUtils.parseExpectedRecords(expectedJson);
-            // fetch DB rows and convert
+            // Extract data using generic utilities
+            List<Map<String, String>> apiRecords = JsonUtils.extractRecords(
+                resp.body, 
+                CustomerAccountConfig.API_ARRAY_PATH, 
+                CustomerAccountConfig.API_FIELD_MAPPINGS
+            );
+
+            // Parse expected records
+            List<Map<String, String>> expectedRecords = JsonUtils.parseExpectedRecords(
+                expectedJson, 
+                CustomerAccountConfig.EXPECTED_FIELD_MAPPINGS
+            );
+
+            // Fetch DB records and convert
             List<Map<String,Object>> dbRows = DBUtils.fetchCudProdRelnByCin(customerCin);
-            List<AccountRecord> dbRecords = JsonUtils.fromDbRows(dbRows);
+            List<Map<String, String>> dbRecords = JsonUtils.convertFromDbRows(
+                dbRows, 
+                CustomerAccountConfig.DB_FIELD_MAPPINGS
+            );
 
-            // compare sets (order independent)
-            Set<AccountRecord> apiSet = new HashSet<>(apiRecords);
-            Set<AccountRecord> expectedSet = new HashSet<>(expectedRecords);
-            Set<AccountRecord> dbSet = new HashSet<>(dbRecords);
+            // Get configured validator
+            DataValidator validator = CustomerAccountConfig.getAccountValidator();
 
-            boolean excelMatches = apiSet.equals(expectedSet);
-            boolean dbMatches = apiSet.equals(dbSet);
+            // Compare using generic validator
+            DataValidator.ComparisonResult excelComparison = validator.compareRecordSets(
+                apiRecords, expectedRecords, "API", "Excel"
+            );
+            
+            DataValidator.ComparisonResult dbComparison = validator.compareRecordSets(
+                apiRecords, dbRecords, "API", "Database"
+            );
+
+            boolean excelMatches = excelComparison.matches;
+            boolean dbMatches = dbComparison.matches;
 
             if (excelMatches && dbMatches) {
                 result = "PASS";
             } else {
-                // build descriptive diff
-                Set<AccountRecord> onlyInApi = new HashSet<>(apiSet); onlyInApi.removeAll(dbSet); onlyInApi.removeAll(expectedSet);
-                Set<AccountRecord> onlyInDb = new HashSet<>(dbSet); onlyInDb.removeAll(apiSet);
-                Set<AccountRecord> onlyInExpected = new HashSet<>(expectedSet); onlyInExpected.removeAll(apiSet);
-
-                StringBuilder sb = new StringBuilder();
-                if (!excelMatches) sb.append("ExcelMismatch: onlyInExpected=").append(onlyInExpected).append("; ");
-                if (!dbMatches) sb.append("DBMismatch: onlyInApi=").append(onlyInApi).append(", onlyInDb=").append(onlyInDb).append("; ");
-
-                result = "FAIL: " + sb.toString();
+                StringBuilder sb = new StringBuilder("FAIL: ");
+                if (!excelMatches) {
+                    sb.append("Excel mismatch - ").append(excelComparison.getDetailedMessage()).append("; ");
+                }
+                if (!dbMatches) {
+                    sb.append("DB mismatch - ").append(dbComparison.getDetailedMessage()).append("; ");
+                }
+                result = sb.toString();
                 ExcelUtils.writeResult(EXCEL_PATH, CASE_SHEET, testCaseId, result);
                 Assert.fail(result);
             }
 
-            // success path -> write PASS
+            // Success - write PASS
             ExcelUtils.writeResult(EXCEL_PATH, CASE_SHEET, testCaseId, result);
 
         } catch (AssertionError ae) {
-            // already wrote result
             throw ae;
         } catch (Exception ex) {
             String msg = "FAIL: " + ex.getMessage();
@@ -142,12 +152,11 @@ public class CustomerAccountTest {
         Map<String,String> map = new LinkedHashMap<>();
         if (json == null || json.isBlank()) return map;
         try {
-            // use Jackson to parse into Map
             com.fasterxml.jackson.databind.ObjectMapper m = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String,Object> raw = m.readValue(json, Map.class);
             raw.forEach((k,v)-> map.put(String.valueOf(k), v == null ? "" : String.valueOf(v)));
         } catch (Exception e) {
-            // fallback to naive parser (key:value pairs)
+            // Fallback parser
             String t = json.trim().replaceAll("[{}\"]", "");
             for (String kv : t.split(",")) {
                 String[] parts = kv.split(":");
