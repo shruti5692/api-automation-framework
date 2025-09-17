@@ -1,0 +1,73 @@
+package com.framework.core;
+
+import java.sql.*;
+import java.util.*;
+
+/**
+ * Generic database utility for reading data.
+ * Usage:
+ *   List<Map<String,Object>> rows =
+ *         DbUtils.executeQuery("SELECT * FROM CUD_PROD_RELN WHERE CUSTOMER_ID=?",
+ *                              customerId);
+ */
+public class DbUtils {
+
+    private static final String URL      = ConfigManager.get("db.url");
+    private static final String USER     = ConfigManager.get("db.user");
+    private static final String PASSWORD = ConfigManager.get("db.password");
+
+    // optional driver class, load once
+    static {
+        try {
+            String driver = ConfigManager.get("db.driver");  // e.g. "com.ibm.db2.jcc.DB2Driver"
+            if (driver != null && !driver.isBlank()) {
+                Class.forName(driver);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Unable to load DB driver", e);
+        }
+    }
+
+    /**
+     * Executes a SELECT query with optional positional parameters.
+     * @param sql      SQL statement with ? placeholders
+     * @param params   values for each placeholder
+     * @return         list of rows, each row is Map<columnName, Object>
+     */
+    public static List<Map<String,Object>> executeQuery(String sql, Object... params) {
+        List<Map<String,Object>> result = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            // fill placeholders
+            if (params != null) {
+                for (int i = 0; i < params.length; i++) {
+                    ps.setObject(i + 1, params[i]);
+                }
+            }
+
+            try (ResultSet rs = ps.executeQuery()) {
+                ResultSetMetaData md = rs.getMetaData();
+                int colCount = md.getColumnCount();
+                while (rs.next()) {
+                    Map<String,Object> row = new LinkedHashMap<>();
+                    for (int i = 1; i <= colCount; i++) {
+                        row.put(md.getColumnLabel(i), rs.getObject(i));
+                    }
+                    result.add(row);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("DB query failed: " + sql, e);
+        }
+        return result;
+    }
+
+    /**
+     * Utility to fetch a single row quickly.
+     */
+    public static Map<String,Object> fetchOne(String sql, Object... params) {
+        List<Map<String,Object>> rows = executeQuery(sql, params);
+        return rows.isEmpty() ? Collections.emptyMap() : rows.get(0);
+    }
+}
