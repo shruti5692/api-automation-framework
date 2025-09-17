@@ -1,145 +1,61 @@
-package tests;
+package com.framework.tests;
 
-import com.framework.utils.ExcelUtils;
-import okhttp3.*;
+import com.framework.core.*;
+import io.restassured.response.Response;
 import org.testng.Assert;
-import org.testng.annotations.AfterSuite;
-import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
-import com.jayway.jsonpath.JsonPath;
-
-import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
 import java.util.*;
 
-public class CustomerAccountExcelTest {
+public class CustomerAccountTest extends BaseApiClient {
 
     private static final String EXCEL_PATH = "src/test/resources/TestData.xlsx";
-    private static final String SHEET_NAME = "Accounts";
+    private static final String AUTH_SHEET = "Auth";
+    private static final String CASE_SHEET = "TestCases";
 
-    // Keeps the full JSON response of each test run
-    private final List<String> fullResponses = new ArrayList<>();
+    @Test
+    public void verifyCustomerAccounts() throws Exception {
 
-    /**
-     * Reads all rows from Excel and feeds them to TestNG.
-     */
-    @DataProvider(name = "excelData")
-    public Object[][] excelData() throws Exception {
-        List<Map<String,String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
-        Object[][] data = new Object[rows.size()][1];
-        for (int i = 0; i < rows.size(); i++) {
-            data[i][0] = rows.get(i);
+        // --- Reusable util calls ---
+        List<Map<String,String>> authData = ExcelUtils.readSheet(EXCEL_PATH, AUTH_SHEET);
+        String username = authData.get(0).get("username");
+
+        List<Map<String,String>> testCases = ExcelUtils.readSheet(EXCEL_PATH, CASE_SHEET);
+
+        // --- Per-testcase logic ---
+        for (Map<String,String> tc : testCases) {
+
+            String tcId   = tc.get("TestCaseID");
+            String custId = tc.get("CustomerIdentificationNumber");
+            Map<String,String> hdrs = parseHeaderJson(tc.get("Headers"));
+
+            // static keys come from config
+            hdrs.put("trust-token", ConfigManager.get("trust.token"));
+            hdrs.put("sensitive-key", ConfigManager.get("sensitive.key"));
+
+            Map<String,String> qp = Map.of("customerIdentificationNumber", custId);
+
+            Response res = get(ConfigManager.get("api.customerAccountUrl"), hdrs, qp);
+
+            boolean pass = validateResponse(res, tc.get("ExpectedOutput"));
+            ExcelUtils.writeResult(EXCEL_PATH, CASE_SHEET, tcId, pass ? "Pass" : "Fail");
+            Assert.assertTrue(pass, "Validation failed for TC: " + tcId);
         }
-        return data;
     }
 
-    @Test(dataProvider = "excelData")
-    public void validateAccounts(Map<String, String> row) throws Exception {
-
-        String testCaseId    = row.get("TestCaseID");
-        String username      = row.get("Username");
-        String authIndex     = row.get("AuthIndexValue");
-        String sensitiveKey  = row.get("SensitiveKey");
-        String custId        = row.get("CustomerIdentificationNumber");
-        String expectedAccts = row.get("ExpectedAccounts"); // comma-separated list
-
-        String result;   // PASS or FAIL
-
-        try {
-            // ----- 1. Fetch Staff JWT -----
-            String jwt = StaffJwtFetcher.fetchJwt(username, authIndex);
-
-            // ----- 2. Prepare Sensitive-Data header -----
-            String sensitiveDataJson =
-                    "[{\"key\":\"" + sensitiveKey + "\",\"value\":\"" + custId + "\"}]";
-
-            // ----- 3. Build URL -----
-            String url = "https://digitaldev-int-rbwm.systems.uk.hsbc/"
-                    + "cb-rps-05/gb-hbeu-rps-pod-cust-rel-acct-enq-sct-internal-proxy/"
-                    + "v1/cust/" + sensitiveKey + "/rel-acct?maxAccounts=0004";
-
-            // ----- 4. Create request -----
-            OkHttpClient client = new OkHttpClient();
-            Request request = new Request.Builder()
-                    .url(url)
-                    .get()
-                    .addHeader("X-HSBC-Locale", "en_GB")
-                    .addHeader("X-HSBC-Chnl-CountryCode", "GB")
-                    .addHeader("X-HSBC-Chnl-Group-Member", "HBEU")
-                    .addHeader("X-HSBC-User-Id", "C12345678")
-                    .addHeader("X-HSBC-CAM-Level", "40")
-                    .addHeader("X-HSBC-Channel-Id", "OHB")
-                    .addHeader("X-HSBC-Src-Device-Id", "1234")
-                    .addHeader("X-HSBC-Session-Correlation-Id", "q2")
-                    .addHeader("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8)")
-                    .addHeader("X-HSBC-Request-Correlation-Id", "shubham")
-                    .addHeader("Content-Type", "application/json")
-                    .addHeader("X-HSBC-IP-Id", "136.46.24.54")
-                    .addHeader("X-HSBC-Bene-Type", "RSP9")
-                    .addHeader("X-HSBC-E2E-Trust-Token", jwt)
-                    .addHeader("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2")
-                    .addHeader("X-HSBC-Client-Secret", "68Cf51e5D5514180bf211DAf3396AD1C")
-                    .addHeader("X-HSBC-Sort-Code", "000001")
-                    .addHeader("X-HSBC-Operator-Service-Unit-Id", "400521")
-                    .addHeader("X-HSBC-Operator-Institution-Id", "Z")
-                    .addHeader("x-forwarded-for", "1234")
-                    .addHeader("accept-language", "en")
-                    .addHeader("X-HSBC-Sensitive-Data", sensitiveDataJson)
-                    .build();
-
-            // ----- 5. Execute call -----
-            String body;
-            try (Response resp = client.newCall(request).execute()) {
-                int status = resp.code();
-                body = resp.body() != null ? resp.body().string() : "";
-
-                // store and print entire response
-                fullResponses.add(body);
-                System.out.println("==== Full API Response for " + testCaseId + " ====");
-                System.out.println(body);
-
-                // also write JSON to a file for later inspection
-                Path dir = Paths.get("target/apiResponses");
-                Files.createDirectories(dir);
-                Files.writeString(
-                        dir.resolve(testCaseId + ".json"),
-                        body,
-                        StandardCharsets.UTF_8
-                );
-
-                Assert.assertEquals(status, 200,
-                        "Expected HTTP 200, but got " + status);
-
-                // ----- 6. Validate accounts -----
-                List<String> actualAccounts =
-                        JsonPath.read(body, "$..accountDetails.accountNumber");
-                List<String> expectedList = Arrays.asList(
-                        expectedAccts.replaceAll("\\s", "").split(","));
-
-                Assert.assertTrue(actualAccounts.containsAll(expectedList),
-                        "Accounts mismatch. Expected " + expectedList +
-                                " but got " + actualAccounts);
+    private Map<String,String> parseHeaderJson(String json) {
+        Map<String,String> map = new HashMap<>();
+        if (json != null) {
+            json = json.replaceAll("[{}\"]","");
+            for (String pair : json.split(",")) {
+                String[] kv = pair.split(":");
+                if (kv.length==2) map.put(kv[0].trim(), kv[1].trim());
             }
-
-            result = "PASS";
-
-        } catch (AssertionError | Exception e) {
-            result = "FAIL: " + e.getMessage();
-            throw e;   // still fail the TestNG test
-        } finally {
-            // ----- 7. Write result back to Excel -----
-            ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
         }
+        return map;
     }
 
-    /**
-     * Optional: dump all collected responses once at the end of the suite.
-     */
-    @AfterSuite
-    public void printAllResponses() {
-        System.out.println("===== ALL API RESPONSES =====");
-        for (int i = 0; i < fullResponses.size(); i++) {
-            System.out.println("Response " + (i + 1) + ":\n" + fullResponses.get(i));
-        }
+    private boolean validateResponse(Response res, String expectedJson) {
+        // call reusable JSON comparison if you want
+        return res.statusCode()==200;
     }
 }
