@@ -4,29 +4,24 @@ import org.framework.utils.DBUtils;
 import java.util.*;
 
 /**
- * Helper dedicated to this API test.
- * Builds the query for CUD_PROD_RELN and returns a Set of Maps
- * with keys: CUST_NO, PROD_ID, PROD_COD.
+ * Builds and runs the CUD_PROD_RELN query and returns
+ * Set of PROD_ID (concatenated sortCode + accountNumber)
  */
 public class DbFetchHelper {
 
     private static final String QUERY =
-        "SELECT CUST_NO, PROD_ID, PROD_COD " +
+        "SELECT CUST_NO, RTRIM(PROD_ID) AS PROD_ID, PROD_COD " +
         "FROM CUD_PROD_RELN " +
         "WHERE CUST_NO = ? " +
-        "  AND LENGTH(PROD_ID) = 14 " +
+        "  AND LENGTH(RTRIM(PROD_ID)) = 14 " +
         "  AND OPEN_CLO_STA = 'O'";
 
-    public static Set<Map<String,String>> fetchCustomerProducts(String customerNumber) throws Exception {
+    public static Set<String> fetchProdIds(String customerNumber) throws Exception {
         List<Map<String,Object>> rows = DBUtils.executeQuery(QUERY, customerNumber);
-        Set<Map<String,String>> result = new HashSet<>();
-        for (Map<String,Object> row : rows) {
-            Map<String,String> normalized = new HashMap<>();
-            normalized.put("CUST_NO", String.valueOf(row.get("CUST_NO")));
-            normalized.put("PROD_ID", String.valueOf(row.get("PROD_ID")));
-            normalized.put("PROD_COD", String.valueOf(row.get("PROD_COD")));
-            result.add(normalized);
+        Set<String> out = new HashSet<>();
+        for (Map<String,Object> r : rows) {
+            out.add(String.valueOf(r.get("PROD_ID")).trim());
         }
-        return result;
+        return out;
     }
 }
