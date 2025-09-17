@@ -1,0 +1,51 @@
+package org.framework.base;
+
+import okhttp3.*;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Minimal OkHttp wrapper returning a simple ApiResponse object.
+ */
+public class BaseApiClient {
+
+    private static final OkHttpClient client = new OkHttpClient.Builder().build();
+
+    public static class ApiResponse {
+        public final int status;
+        public final String body;
+        public final Map<String,String> headers;
+        public ApiResponse(int status, String body, Map<String,String> headers) {
+            this.status = status; this.body = body; this.headers = headers;
+        }
+    }
+
+    public ApiResponse get(String url, Map<String,String> headers, Map<String,String> queryParams) throws IOException {
+        HttpUrl.Builder b = HttpUrl.parse(url).newBuilder();
+        if (queryParams != null) queryParams.forEach((k,v)-> { if (v!=null) b.addQueryParameter(k,v); });
+
+        Request.Builder rb = new Request.Builder().url(b.build()).get();
+        if (headers != null) headers.forEach((k,v)-> { if (v!=null) rb.addHeader(k,v); });
+
+        try (Response resp = client.newCall(rb.build()).execute()) {
+            String body = resp.body() != null ? resp.body().string() : "";
+            Map<String,String> respHeaders = new HashMap<>();
+            for (String hn : resp.headers().names()) respHeaders.put(hn, resp.header(hn));
+            return new ApiResponse(resp.code(), body, respHeaders);
+        }
+    }
+
+    public ApiResponse postJson(String url, Map<String,String> headers, String json) throws IOException {
+        RequestBody rb = RequestBody.create(json == null ? "" : json, MediaType.parse("application/json"));
+        Request.Builder b = new Request.Builder().url(url).post(rb);
+        if (headers != null) headers.forEach((k,v)-> { if (v!=null) b.addHeader(k,v); });
+        try (Response resp = client.newCall(b.build()).execute()) {
+            String body = resp.body() != null ? resp.body().string() : "";
+            Map<String,String> respHeaders = new HashMap<>();
+            for (String hn : resp.headers().names()) respHeaders.put(hn, resp.header(hn));
+            return new ApiResponse(resp.code(), body, respHeaders);
+        }
+    }
+}
