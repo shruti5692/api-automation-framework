@@ -1,50 +1,85 @@
 package tests;
 
-import org.framework.utils.DBUtils;
 import org.framework.utils.ExcelUtils;
-import org.framework.utils.ResponseValidator;
+import org.framework.utils.JwtFetcher;
+import okhttp3.*;
+import com.jayway.jsonpath.JsonPath;
+import org.testng.Assert;
+import org.testng.annotations.Test;
 
 import java.util.*;
 
 public class CustomerAccountTest {
 
-    public static void main(String[] args) throws Exception {
+    private static final String EXCEL_PATH = "src/test/resources/TestData.xlsx";
+    private static final String AUTH_SHEET = "Auth";
+    private static final String TEST_SHEET = "TestCases";
+    private static final String AUTH_INDEX_VALUE = "TestTree";   // static as per requirement
+    private static final String SENSITIVE_KEY = "84d89877f0d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f88217884";
 
-        String excelPath = "src/test/resources/TestData.xlsx";
-        List<Map<String, String>> testRows =
-                ExcelUtils.readSheet(excelPath, "TestCases");
+    @Test
+    public void validateCustomerAccounts() throws Exception {
 
-        for (Map<String, String> row : testRows) {
-            String tcId   = row.get("TestCaseID");
-            String custNo = row.get("CustomerIdentificationNumber");
+        // ---- 1️⃣ Read Excel ----
+        Map<String,String> authRow = ExcelUtils.readSheet(EXCEL_PATH, AUTH_SHEET).get(0);
+        String username = authRow.get("Username");
 
-            // 1. Call your API client to get the response map
-            Map<String,String> apiData = callCustomerAccountApi(custNo);
+        Map<String,String> testRow = ExcelUtils.readSheet(EXCEL_PATH, TEST_SHEET).get(0);
+        String custNo   = testRow.get("CustomerIdentificationNumber");
+        String headerJson = testRow.get("Headers");   // e.g. {"X-HSBC-Locale":"en_GB",...}
 
-            // 2. DB query for this customer
-            String sql = "SELECT CUST_NO, PROD_ID, PROD_COD " +
-                         "FROM cudprodreln " +
-                         "WHERE CUST_NO = ? " +
-                         "AND LENGTH(PROD_ID) = 14 " +
-                         "AND OPEN_CLO_STA = 'O'";
-            List<Map<String,Object>> dbData = DBUtils.executeQuery(sql, custNo);
+        // ---- 2️⃣ Fetch JWT ----
+        String jwt = JwtFetcher.fetchJwt(username, AUTH_INDEX_VALUE);
+        System.out.println("🔑 JWT: " + jwt);
 
-            // 3. Validate
-            boolean pass = ResponseValidator.validateAccount(dbData, apiData);
+        // ---- 3️⃣ Prepare headers from Excel + JWT + Sensitive Data ----
+        // Header cell in Excel should contain JSON: {"HeaderName":"value", ...}
+        Map<String,String> headersMap = new HashMap<>(JsonPath.read(headerJson, "$"));
+        headersMap.put("X-HSBC-E2E-Trust-Token", jwt);
+        headersMap.put("X-HSBC-Sensitive-Data",
+                "[{\"key\":\"" + SENSITIVE_KEY + "\",\"value\":\"" + custNo + "\"}]");
 
-            // 4. Write result to Excel
-            ExcelUtils.writeResult(excelPath, "TestCases", tcId,
-                    pass ? "PASS" : "FAIL");
+        // ---- 4️⃣ Build URL ----
+        String url = "https://digitaldev-int-rbwm.systems.uk.hsbc/"
+                   + "cb-rps-05/gb-hbeu-rps-pod-cust-rel-acct-enq-sct-internal-proxy/"
+                   + "v1/cust/" + SENSITIVE_KEY + "/rel-acct?maxAccounts=0004";
+
+        // ---- 5️⃣ Call API ----
+        OkHttpClient client = new OkHttpClient();
+        Request.Builder builder = new Request.Builder().url(url).get();
+        headersMap.forEach(builder::addHeader);
+        Request request = builder.build();
+
+        Response response = client.newCall(request).execute();
+        Assert.assertEquals(response.code(), 200, "HTTP status not 200");
+
+        String body = response.body() != null ? response.body().string() : "";
+        System.out.println("🌐 API Response: " + body);
+
+        // Extract only the three DB fields from the JSON path you expect.
+        // Adjust the JsonPath if your API response differs.
+        List<String> apiCustNo  = JsonPath.read(body, "$..CUST_NO");
+        List<String> apiProdId  = JsonPath.read(body, "$..PROD_ID");
+        List<String> apiProdCod = JsonPath.read(body, "$..PROD_COD");
+
+        Set<Map<String,String>> apiSet = new HashSet<>();
+        for (int i = 0; i < apiCustNo.size(); i++) {
+            Map<String,String> rec = new HashMap<>();
+            rec.put("CUST_NO", apiCustNo.get(i));
+            rec.put("PROD_ID", apiProdId.get(i));
+            rec.put("PROD_COD", apiProdCod.get(i));
+            apiSet.add(rec);
         }
-        DBUtils.close();
-    }
 
-    private static Map<String,String> callCustomerAccountApi(String custNo) {
-        // hit your API & parse only the needed fields
-        Map<String,String> m = new HashMap<>();
-        m.put("customerNumber", custNo);
-        m.put("productCode",   "sampleProd");   // from JSON
-        m.put("accountNumber", "12345678901234");
-        return m;
+        // ---- 6️⃣ Fetch DB rows ----
+        Set<Map<String,String>> dbSet = DbFetchHelper.fetchCustomerProducts(custNo);
+        System.out.println("🗄️  DB Rows: " + dbSet);
+
+        // ---- 7️⃣ Validate ----
+        Assert.assertEquals(apiSet, dbSet,
+                "API response rows don't match DB rows for customer " + custNo);
+
+        // Optionally write result back to Excel
+        ExcelUtils.writeResult(EXCEL_PATH, TEST_SHEET, testRow.get("TestCaseID"), "PASS");
     }
 }
