@@ -24,4 +24,53 @@ public class CustomerAccountTest {
     public Object[][] cases() throws Exception {
         List<Map<String,String>> rows = ExcelUtils.readSheet(EXCEL_PATH, CASE_SHEET);
         Object[][] data = new Object[rows.size()][1];
-        for
+        for (int i = 0; i < rows.size(); i++) data[i][0] = rows.get(i);
+        return data;
+    }
+
+    @Test(dataProvider = "cases")
+    public void customerAccountTest(Map<String,String> row) throws Exception {
+
+        String testId   = row.get("TestCaseID");
+        String custCin  = row.get("CustomerIdentificationNumber");
+        String headersJ = row.get("Headers");   // JSON string of extra headers
+
+        // username from Auth sheet (first row only)
+        String username = ExcelUtils.readSheet(EXCEL_PATH, AUTH_SHEET)
+                                    .get(0).get("Username");
+
+        // build request headers
+        Map<String,String> headers = JsonHelper.toMap(headersJ);
+        headers.put("X-HSBC-E2E-Trust-Token", JwtFetcher.fetchJwt(username));
+        headers.put("Content-Type", "application/json");
+        headers.put("Accept", "application/json");
+
+        // sensitive key header
+        String sensitiveKey = ConfigManager.get("sensitive.key");
+        headers.put("X-HSBC-Sensitive-Data",
+            "[{\"key\":\"" + sensitiveKey + "\",\"value\":\"" + custCin + "\"}]");
+
+        // call API
+        String base = ConfigManager.get("api.base.url");
+        String path = ConfigManager.get("api.cust.account.path");
+        String url  = base + path + "/" + sensitiveKey + "/rel-acct";
+
+        String apiBody = SimpleHttp.get(url, headers, Map.of("maxAccounts","0004"));
+
+        // extract Set<String> from API (sortCode+accountNumber)
+        Set<String> apiSet = JsonHelper.extractProdIds(apiBody);
+
+        // fetch DB data for same CIN
+        Set<String> dbSet = DbFetchHelper.fetchProdIds(custCin);
+
+        // compare
+        boolean pass = apiSet.equals(dbSet);
+        ExcelUtils.writeResult(EXCEL_PATH, CASE_SHEET, testId, pass ? "PASS" : "FAIL");
+        Assert.assertTrue(pass,
+            "Mismatch\nOnlyInAPI: " + diff(apiSet, dbSet) + "\nOnlyInDB: " + diff(dbSet, apiSet));
+    }
+
+    private static Set<String> diff(Set<String>a, Set<String>b){
+        Set<String> s=new HashSet<>(a); s.removeAll(b); return s;
+    }
+}
