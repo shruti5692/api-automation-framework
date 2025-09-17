@@ -1,0 +1,60 @@
+package org.framework.model;
+
+import java.util.Objects;
+
+/**
+ * POJO representing the 4 fields we assert.
+ * Normalizes accountNumber and sortCode by trimming and removing leading zeros.
+ */
+public class AccountRecord {
+    public final String productCode;
+    public final String accountNumber;
+    public final String sortCode;
+    public final String accountIn;
+
+    public AccountRecord(String productCode, String accountNumber, String sortCode, String accountIn) {
+        this.productCode = normalize(productCode).toUpperCase();
+        this.accountNumber = normalizeAccount(accountNumber);
+        this.sortCode = normalizeSort(sortCode);
+        this.accountIn = normalize(accountIn).toUpperCase();
+    }
+
+    private static String normalize(String s) { return s == null ? "" : s.trim(); }
+
+    // remove leading zeros for comparison
+    private static String normalizeAccount(String s) {
+        if (s == null) return "";
+        String t = s.trim();
+        return t.replaceFirst("^0+(?!$)", "");
+    }
+
+    private static String normalizeSort(String s) {
+        if (s == null) return "";
+        return s.trim().replaceFirst("^0+(?!$)", "");
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof AccountRecord)) return false;
+        AccountRecord other = (AccountRecord) o;
+        return productCode.equals(other.productCode)
+                && accountNumber.equals(other.accountNumber)
+                && sortCode.equals(other.sortCode)
+                && accountIn.equals(other.accountIn);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(productCode, accountNumber, sortCode, accountIn);
+    }
+
+    @Override
+    public String toString() {
+        return "AccountRecord{" +
+                "productCode='" + productCode + '\'' +
+                ", accountNumber='" + accountNumber + '\'' +
+                ", sortCode='" + sortCode + '\'' +
+                ", accountIn='" + accountIn + '\'' +
+                '}';
+    }
+}
