@@ -1,16 +1,19 @@
-package com.framework.base;
+package com.framework.core;
 
-import com.framework.config.ConfigManager;
-import org.testng.annotations.BeforeClass;
+import io.restassured.RestAssured;
+import io.restassured.response.Response;
+import java.util.Map;
 
-/**
- * Minimal base test placed in main so it is reusable across test modules.
- * It loads config properties at test startup. Tests should extend this or call ConfigManager directly.
- */
-public class BaseTest {
+public class BaseApiClient {
 
-    @BeforeClass
-    public void baseSetup() throws Exception {
-        ConfigManager.load("src/test/resources/application.properties");
+    public Response get(String endpoint, Map<String,String> headers,
+                        Map<String,String> queryParams) {
+        return RestAssured.given()
+                .headers(headers)
+                .queryParams(queryParams)
+                .get(endpoint)
+                .then()
+                .extract()
+                .response();
     }
 }
