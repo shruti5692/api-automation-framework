@@ -1,53 +1,42 @@
-package utils;
+public static String fetchIb2bJwt() throws IOException {
+    OkHttpClient client = new OkHttpClient();
 
-import okhttp3.*;
-import org.json.JSONObject;
-import java.io.IOException;
-
-public class JwtFetcher {
-
-    // keep your existing fetchStaffJwt() here
-
-    /**
-     * Fetch a JWT from the iB2B token translator using OkHttp + org.json.
-     */
-    public static String fetchIb2bJwt() throws IOException {
-        OkHttpClient client = new OkHttpClient();
-
-        String jsonBody = """
-            {
-              "input_token_state": {
-                "token_type": "CREDENTIAL",
-                "username": "GB-SVC-UKBEREV",
-                "password": "F568-a55f47837"
-              },
-              "output_token_state": {
-                "token_type": "JWT",
-                "issued_token1": "issued_token"
-              }
-            }
-            """;
-
-        RequestBody body = RequestBody.create(
-                jsonBody,
-                MediaType.parse("application/json")
-        );
-
-        Request request = new Request.Builder()
-                .url("https://cmb-ib2b-dsp-pprod-eu.systems.uk.hsbc:8443/dsp/rest-sts/DSP_iB2B/iB2B_tokenTranslator?_action=translate")
-                .post(body)
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                throw new IOException("Unexpected HTTP code: " + response.code());
-            }
-
-            String translateJson = response.body().string();
-            // identical parsing style to fetchStaffJwt
-            JSONObject obj = new JSONObject(translateJson);
-            return obj.getJSONObject("output_token_state")
-                      .getString("issued_token");
+    String jsonBody = """
+        {
+          "input_token_state": {
+            "token_type": "CREDENTIAL",
+            "username": "GB-SVC-UKBEREV",
+            "password": "F568-a55f47837"
+          },
+          "output_token_state": {
+            "token_type": "JWT",
+            "issued_token1": "issued_token"
+          }
         }
+        """;
+
+    RequestBody body = RequestBody.create(
+            jsonBody,
+            MediaType.parse("application/json")
+    );
+
+    Request request = new Request.Builder()
+            .url("https://cmb-ib2b-dsp-pprod-eu.systems.uk.hsbc:8443/dsp/rest-sts/DSP_iB2B/iB2B_tokenTranslator?_action=translate")
+            .post(body)
+            .build();
+
+    try (Response response = client.newCall(request).execute()) {
+        if (!response.isSuccessful()) {
+            throw new IOException("Unexpected HTTP code: " + response.code());
+        }
+
+        String translateJson = response.body().string();
+        String jwt = new org.json.JSONObject(translateJson)
+                         .getJSONObject("output_token_state")
+                         .getString("issued_token");
+
+        // Print JWT for reference
+        System.out.println("JwtFetcher fetched iB2B JWT: " + jwt);
+        return jwt;
     }
 }
