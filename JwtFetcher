@@ -1,78 +1,52 @@
-package org.framework.utils;
+package utils;
 
-import okhttp3.*;
+import io.restassured.RestAssured;
+import io.restassured.http.ContentType;
+import io.restassured.response.Response;
 
 public class JwtFetcher {
 
-    private static final OkHttpClient client = new OkHttpClient();
+    // existing fetchStaffJwt(...) method stays as is
 
-    public static void main(String[] args) {
-        try {
-            String jwt = getJwtToken();
-            System.out.println("✅ JWT Token: " + jwt);
-        } catch (Exception e) {
-            e.printStackTrace();
+    /**
+     * Fetch JWT from the iB2B Token Translator service.
+     *
+     * @return the JWT string if successful, otherwise throws an exception
+     */
+    public static String fetchIb2bJwt() throws Exception {
+        String url = "https://cmb-ib2b-dsp-pprod-eu.systems.uk.hsbc:8443/dsp/rest-sts/DSP_iB2B/iB2B_tokenTranslator?_action=translate";
+
+        // JSON request body
+        String body = """
+            {
+              "input_token_state": {
+                "token_type": "CREDENTIAL",
+                "username": "GB-SVC-UKBEREV",
+                "password": "F568-a55f47837"
+              },
+              "output_token_state": {
+                "token_type": "JWT",
+                "issued_token1": "issued_token"
+              }
+            }
+            """;
+
+        Response resp = RestAssured.given()
+                .relaxedHTTPSValidation()         // allow self-signed/HSBC internal certs
+                .contentType(ContentType.JSON)
+                .body(body)
+                .post(url)
+                .then()
+                .statusCode(200)                 // fail fast if not OK
+                .extract()
+                .response();
+
+        // Adjust the JSON path if HSBC’s response differs
+        String jwt = resp.jsonPath().getString("issued_token");
+
+        if (jwt == null || jwt.isEmpty()) {
+            throw new IllegalStateException("No JWT returned from iB2B token translator");
         }
-    }
-
-    public static String getJwtToken() throws Exception {
-        // Read values from VM options
-        String ssoUrl = System.getProperty("sso.token.url");
-        String username = System.getProperty("open.am.username");
-        String password = System.getProperty("open.am.password");
-        String translateUrl = System.getProperty("token.translate.url");
-
-        if (ssoUrl == null || username == null || password == null || translateUrl == null) {
-            throw new IllegalArgumentException("❌ Missing required system properties! " +
-                    "Please pass -Dsso.token.url, -Dopen.am.username, -Dopen.am.password, -Dtoken.translate.url");
-        }
-
-        // Step 1: Call SSO login (POST with username/password)
-        String loginPayload = "{ \"username\": \"" + username + "\", \"password\": \"" + password + "\" }";
-
-        RequestBody loginBody = RequestBody.create(
-                loginPayload, MediaType.parse("application/json"));
-
-        Request ssoRequest = new Request.Builder()
-                .url(ssoUrl)
-                .post(loginBody)
-                .build();
-
-        Response ssoResponse = client.newCall(ssoRequest).execute();
-        if (!ssoResponse.isSuccessful()) {
-            throw new RuntimeException("❌ SSO login failed: " + ssoResponse.code());
-        }
-
-        String ssoResponseBody = ssoResponse.body().string();
-        System.out.println("🔹 SSO Response: " + ssoResponseBody);
-
-        // ⚠️ Here you may need to parse JSON to extract "tokenId" or similar from response.
-        // For now, assuming full response IS the token (adjust if needed).
-        String ssoToken = ssoResponseBody;
-
-        // Step 2: Call translate URL with SSO token
-        String translatePayload = "{ \"input_token\": \"" + ssoToken + "\" }";
-
-        RequestBody translateBody = RequestBody.create(
-                translatePayload, MediaType.parse("application/json"));
-
-        Request translateRequest = new Request.Builder()
-                .url(translateUrl)
-                .post(translateBody)
-                .build();
-
-        Response translateResponse = client.newCall(translateRequest).execute();
-        if (!translateResponse.isSuccessful()) {
-            throw new RuntimeException("❌ Translate token failed: " + translateResponse.code());
-        }
-
-        String translateJson = translateResponse.body().string();
-        System.out.println("🔹 Translate Response: " + translateJson);
-
-        // Step 3: Extract issued_token from JSON
-        // Assuming JSON looks like: { "issued_token": "JWT-HERE" }
-        String jwt = translateJson.split("\"issued_token\"\\s*:\\s*\"")[1].split("\"")[0];
-
         return jwt;
     }
 }
