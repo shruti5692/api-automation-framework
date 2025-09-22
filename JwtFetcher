@@ -1,23 +1,26 @@
 package utils;
 
-import io.restassured.RestAssured;
-import io.restassured.http.ContentType;
-import io.restassured.response.Response;
+import okhttp3.*;
+
+import java.io.IOException;
 
 public class JwtFetcher {
 
-    // existing fetchStaffJwt(...) method stays as is
+    // keep your existing fetchStaffJwt() here
 
     /**
-     * Fetch JWT from the iB2B Token Translator service.
+     * Fetch JWT from the iB2B Token Translator service using OkHttp.
      *
-     * @return the JWT string if successful, otherwise throws an exception
+     * @return JWT string from the response
+     * @throws IOException if the request or response fails
      */
-    public static String fetchIb2bJwt() throws Exception {
-        String url = "https://cmb-ib2b-dsp-pprod-eu.systems.uk.hsbc:8443/dsp/rest-sts/DSP_iB2B/iB2B_tokenTranslator?_action=translate";
+    public static String fetchIb2bJwt() throws IOException {
+        OkHttpClient client = new OkHttpClient
+                .Builder()
+                .build();
 
         // JSON request body
-        String body = """
+        String jsonBody = """
             {
               "input_token_state": {
                 "token_type": "CREDENTIAL",
@@ -31,22 +34,31 @@ public class JwtFetcher {
             }
             """;
 
-        Response resp = RestAssured.given()
-                .relaxedHTTPSValidation()         // allow self-signed/HSBC internal certs
-                .contentType(ContentType.JSON)
-                .body(body)
-                .post(url)
-                .then()
-                .statusCode(200)                 // fail fast if not OK
-                .extract()
-                .response();
+        RequestBody body = RequestBody.create(
+                jsonBody,
+                MediaType.parse("application/json")
+        );
 
-        // Adjust the JSON path if HSBC’s response differs
-        String jwt = resp.jsonPath().getString("issued_token");
+        Request request = new Request.Builder()
+                .url("https://cmb-ib2b-dsp-pprod-eu.systems.uk.hsbc:8443/dsp/rest-sts/DSP_iB2B/iB2B_tokenTranslator?_action=translate")
+                .post(body)
+                .build();
 
-        if (jwt == null || jwt.isEmpty()) {
-            throw new IllegalStateException("No JWT returned from iB2B token translator");
+        try (Response response = client.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IOException("Unexpected HTTP code: " + response.code());
+            }
+
+            String respBody = response.body().string();
+            // Extract the JWT from the JSON
+            // Using a simple regex/JSON parser; choose whichever JSON library you already use
+            String jwt = JsonUtils.read(respBody, "output_token_state.issued_token"); 
+            // ^ Replace JsonUtils.read(...) with your actual JSON parser (e.g., Jackson, Gson, org.json)
+
+            if (jwt == null || jwt.isEmpty()) {
+                throw new IOException("No JWT returned in response: " + respBody);
+            }
+            return jwt;
         }
-        return jwt;
     }
 }
