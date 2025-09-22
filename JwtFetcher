@@ -1,7 +1,7 @@
 package utils;
 
 import okhttp3.*;
-
+import org.json.JSONObject;
 import java.io.IOException;
 
 public class JwtFetcher {
@@ -9,17 +9,11 @@ public class JwtFetcher {
     // keep your existing fetchStaffJwt() here
 
     /**
-     * Fetch JWT from the iB2B Token Translator service using OkHttp.
-     *
-     * @return JWT string from the response
-     * @throws IOException if the request or response fails
+     * Fetch a JWT from the iB2B token translator using OkHttp + org.json.
      */
     public static String fetchIb2bJwt() throws IOException {
-        OkHttpClient client = new OkHttpClient
-                .Builder()
-                .build();
+        OkHttpClient client = new OkHttpClient();
 
-        // JSON request body
         String jsonBody = """
             {
               "input_token_state": {
@@ -49,16 +43,11 @@ public class JwtFetcher {
                 throw new IOException("Unexpected HTTP code: " + response.code());
             }
 
-            String respBody = response.body().string();
-            // Extract the JWT from the JSON
-            // Using a simple regex/JSON parser; choose whichever JSON library you already use
-            String jwt = JsonUtils.read(respBody, "output_token_state.issued_token"); 
-            // ^ Replace JsonUtils.read(...) with your actual JSON parser (e.g., Jackson, Gson, org.json)
-
-            if (jwt == null || jwt.isEmpty()) {
-                throw new IOException("No JWT returned in response: " + respBody);
-            }
-            return jwt;
+            String translateJson = response.body().string();
+            // identical parsing style to fetchStaffJwt
+            JSONObject obj = new JSONObject(translateJson);
+            return obj.getJSONObject("output_token_state")
+                      .getString("issued_token");
         }
     }
 }
