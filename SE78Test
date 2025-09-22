@@ -1,0 +1,21 @@
+package tests;
+
+import org.testng.annotations.Test;
+import utils.JwtFetcher;
+
+/**
+ * Simple TestNG test to verify the iB2B JWT retrieval.
+ */
+public class SE78Test {
+
+    @Test
+    public void validateIb2bJwt() throws Exception {
+        // Call the new method from JwtFetcher
+        String jwt = JwtFetcher.fetchIb2bJwt();
+        // Print to console for reference
+        System.out.println("Fetched iB2B JWT: " + jwt);
+
+        // Optional basic check
+        assert jwt != null && !jwt.isEmpty() : "JWT should not be null or empty";
+    }
+}
