@@ -108,4 +108,9 @@ public class ExcelUtils {
 
         if (!updated) throw new IllegalStateException("Could not find TestCaseID " + testCaseId + " to write result");
     }
+}        }
+        wb.close();
+
+        if (!updated) throw new IllegalStateException("Could not find TestCaseID " + testCaseId + " to write result");
+    }
 }
