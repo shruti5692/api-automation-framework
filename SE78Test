@@ -3,66 +3,82 @@ package tests;
 import com.framework.utils.ExcelUtils;
 import com.framework.utils.JwtFetcher;
 import okhttp3.*;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
-import java.io.File;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
 public class SE78Test {
 
-    // Adjust these to your project structure
-    private static final String EXCEL_PATH = "src/test/resources/TestData.xlsx";
+    private static final String EXCEL_PATH = System.getProperty("user.dir") + "/TestData.xlsx";
     private static final String SHEET_NAME = "SE78";
+    private final OkHttpClient client = new OkHttpClient();
 
-    @DataProvider(name = "excelData")
-    public Object[][] excelData() throws Exception {
+    @DataProvider(name = "se78Data")
+    public Object[][] se78Data() throws Exception {
         List<Map<String, String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
-        Object[][] data = new Object[rows.size()][1];
-        for (int i = 0; i < rows.size(); i++) {
-            data[i][0] = rows.get(i);
-        }
-        return data;
+        Object[][] out = new Object[rows.size()][1];
+        for (int i = 0; i < rows.size(); i++) out[i][0] = rows.get(i);
+        return out;
     }
 
-    @Test(dataProvider = "excelData")
+    @Test(dataProvider = "se78Data")
     public void callSecurityChargeApi(Map<String, String> row) throws Exception {
-        String testCaseId = row.get("TestCaseID");
-        String chargeId   = row.get("ChargeID");
-        String headersStr = row.get("Headers");
-        String expected   = row.get("ExpectedOutput");
+        String testId   = row.getOrDefault("TestCaseID", "").trim();
+        String chargeId = row.getOrDefault("ChargeID", "").trim();
+        String headers  = row.getOrDefault("Headers", "").trim();        // JSON text
+        String expected = row.getOrDefault("ExpectedOutput", "").trim(); // JSON text (can be partial)
 
-        OkHttpClient client = new OkHttpClient();
+        if (testId.isEmpty()) throw new IllegalArgumentException("TestCaseID missing in Excel row");
+        if (chargeId.isEmpty()) throw new IllegalArgumentException("ChargeID missing in Excel row");
 
-        // ---------- Build Headers ----------
+        System.out.println("=== Running SE78 test: " + testId + " (ChargeID=" + chargeId + ") ===");
+
+        // 1) Get JWT (iB2B translator)
+        String jwt = JwtFetcher.fetchIb2bJwt(); // method must exist
+        System.out.println("SE78Test - fetched JWT (truncated): " + (jwt == null ? "null" : jwt.substring(0, Math.min(64, jwt.length())) + "..."));
+
+        // 2) Parse headers JSON from Excel and build OkHttp headers
         Headers.Builder headerBuilder = new Headers.Builder();
-        // parse headers JSON from excel column "Headers"
-        if (headersStr != null && !headersStr.trim().isEmpty()) {
-            JSONObject headersJson = new JSONObject(headersStr);
-            for (String key : headersJson.keySet()) {
-                String value = headersJson.optString(key, "");
-                if (key == null || key.trim().isEmpty()) {
-                    throw new IllegalArgumentException("Header name is empty in TestCase " + testCaseId);
+        boolean trustTokenPresent = false;
+
+        if (!headers.isBlank()) {
+            JSONObject headerObj = new JSONObject(headers);
+            Iterator<String> keys = headerObj.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                if (key == null) continue;
+                String keyTrim = key.trim();
+                if (keyTrim.isEmpty()) continue;
+
+                String value = headerObj.optString(key, "");
+                // replace placeholder if present
+                if (value != null && value.contains("{TRUST_TOKEN}")) {
+                    value = value.replace("{TRUST_TOKEN}", jwt);
                 }
-                headerBuilder.add(key.trim(), value);
+
+                if (keyTrim.equalsIgnoreCase("X-HSBC-E2E-Trust-Token") || keyTrim.equalsIgnoreCase("X-HSBC-TRUST-TOKEN")) {
+                    trustTokenPresent = true;
+                }
+
+                headerBuilder.add(keyTrim, value == null ? "" : value);
             }
         }
 
-        // add JWT from the new translator method
-        String jwt = JwtFetcher.fetchI2B2Jwt();
-        System.out.println("JwtFetcher fetched iB2B JWT: " + jwt);
-        headerBuilder.add("Authorization", "Bearer " + jwt);
+        // Ensure trust token header exists and uses the fresh jwt
+        if (!trustTokenPresent) {
+            headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
+        }
 
-        // ---------- Build Request ----------
-        HttpUrl url = new HttpUrl.Builder()
-                .scheme("https")
-                .host("cmb-ib2b-dsp-pprod-eu.systems.uk.hsbc")
-                .port(8443)
-                .addPathSegments("dsp/security/charges/" + chargeId.trim())
-                .build();
+        // 3) Build URL and request
+        String url = "https://digitaldev-int-rbwm.systems.uk.hsbc" +
+                "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy" +
+                "/v1/securities/" + chargeId + "/chargedtl";
 
         Request request = new Request.Builder()
                 .url(url)
@@ -70,50 +86,89 @@ public class SE78Test {
                 .get()
                 .build();
 
-        String result;
+        // 4) Execute
+        String responseBody;
+        int status;
         try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                result = "Fail : HTTP " + response.code();
-                ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
-                Assert.fail(result);
-            }
-
-            String responseBody = response.body() != null ? response.body().string() : "";
-            System.out.println("API Response: " + responseBody);
-
-            JSONObject actualJson   = new JSONObject(responseBody);
-            JSONObject expectedJson = new JSONObject(expected);
-
-            // Simple equality check (you can make it partial if needed)
-            if (jsonEquals(expectedJson, actualJson)) {
-                result = "Pass";
-                ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
-            } else {
-                result = "Fail : JSON mismatch";
-                ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
-                Assert.fail(result);
-            }
-        } catch (Exception ex) {
-            result = "Fail : " + ex.getMessage();
-            ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
-            throw ex;
+            status = response.code();
+            responseBody = response.body() == null ? "" : response.body().string();
+        } catch (Exception e) {
+            String res = "FAIL: Request error: " + e.getMessage();
+            ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, res);
+            throw e;
         }
+
+        System.out.println("HTTP " + status + " | Response (truncated): " +
+                (responseBody.length() > 500 ? responseBody.substring(0, 500) + "..." : responseBody));
+
+        // 5) Basic HTTP check
+        if (status != 200) {
+            String res = "FAIL: HTTP " + status;
+            ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, res);
+            Assert.fail(res);
+        }
+
+        // 6) Validate response JSON contains expected JSON (partial or full)
+        boolean pass = true;
+        String failReason = "";
+
+        if (expected != null && !expected.isBlank()) {
+            try {
+                JSONObject expectedJson = new JSONObject(expected);
+                JSONObject actualJson = new JSONObject(responseBody);
+                pass = jsonContains(expectedJson, actualJson);
+                if (!pass) failReason = "Response JSON does not contain ExpectedOutput";
+            } catch (Exception ex) {
+                pass = false;
+                failReason = "Validation error: " + ex.getMessage();
+            }
+        }
+
+        // 7) Write result back to Excel and assert
+        String result = pass ? "PASS" : "FAIL: " + (failReason.isEmpty() ? "mismatch" : failReason);
+        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, result);
+
+        Assert.assertTrue(pass, "SE78 test failed for " + testId + " : " + failReason);
     }
 
     /**
-     * Basic deep comparison of two JSONObjects.
+     * Returns true if `actual` contains all fields/values of `expected`.
+     * Supports nested objects and arrays.
      */
-    private boolean jsonEquals(JSONObject expected, JSONObject actual) {
-        if (!expected.keySet().equals(actual.keySet())) return false;
-        for (String key : expected.keySet()) {
-            Object eVal = expected.get(key);
-            Object aVal = actual.get(key);
-            if (eVal instanceof JSONObject && aVal instanceof JSONObject) {
-                if (!jsonEquals((JSONObject) eVal, (JSONObject) aVal)) return false;
-            } else if (!eVal.equals(aVal)) {
-                return false;
+    private boolean jsonContains(Object expected, Object actual) {
+        if (expected instanceof JSONObject) {
+            if (!(actual instanceof JSONObject)) return false;
+            JSONObject eObj = (JSONObject) expected;
+            JSONObject aObj = (JSONObject) actual;
+            for (String key : eObj.keySet()) {
+                if (!aObj.has(key)) return false;
+                Object eVal = eObj.get(key);
+                Object aVal = aObj.get(key);
+                if (!jsonContains(eVal, aVal)) return false;
             }
+            return true;
+        } else if (expected instanceof JSONArray) {
+            if (!(actual instanceof JSONArray)) return false;
+            JSONArray eArr = (JSONArray) expected;
+            JSONArray aArr = (JSONArray) actual;
+            // each expected element must be found inside actual array (order independent)
+            for (int i = 0; i < eArr.length(); i++) {
+                Object eEl = eArr.get(i);
+                boolean found = false;
+                for (int j = 0; j < aArr.length(); j++) {
+                    if (jsonContains(eEl, aArr.get(j))) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
+            return true;
+        } else {
+            // primitive compare as strings (trimmed)
+            String e = expected == null ? "" : expected.toString().trim();
+            String a = actual == null ? "" : actual.toString().trim();
+            return e.equals(a);
         }
-        return true;
     }
 }
