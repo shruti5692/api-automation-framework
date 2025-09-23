@@ -1,21 +1,73 @@
 package tests;
 
+import okhttp3.*;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
+import utils.ExcelUtils;      // your existing Excel reader
 import utils.JwtFetcher;
 
-/**
- * Simple TestNG test to verify the iB2B JWT retrieval.
- */
+import java.util.List;
+import java.util.Map;
+
 public class SE78Test {
 
-    @Test
-    public void validateIb2bJwt() throws Exception {
-        // Call the new method from JwtFetcher
-        String jwt = JwtFetcher.fetchIb2bJwt();
-        // Print to console for reference
-        System.out.println("Fetched iB2B JWT: " + jwt);
+    private static final String EXCEL_PATH = System.getProperty("user.dir") + "/TestData.xlsx";
+    private static final String SHEET      = "SE78";
 
-        // Optional basic check
-        assert jwt != null && !jwt.isEmpty() : "JWT should not be null or empty";
+    @DataProvider(name = "se78data")
+    public Object[][] se78Data() throws Exception {
+        List<Map<String,String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET);
+        Object[][] out = new Object[rows.size()][1];
+        for (int i = 0; i < rows.size(); i++) out[i][0] = rows.get(i);
+        return out;
+    }
+
+    @Test(dataProvider = "se78data")
+    public void callSecurityChargeApi(Map<String,String> row) throws Exception {
+        // 1. Required fields from Excel
+        String baseUrl   = row.getOrDefault("BaseUrl",
+                             "https://digitaldev-int-rbwm.systems.uk.hsbc");
+        String path      = row.getOrDefault("Path",
+                             "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy/v1/securities/");
+        String chargeId  = row.get("ChargeId"); // e.g. SC0000000116
+        if (chargeId == null || chargeId.isBlank()) {
+            throw new IllegalArgumentException("ChargeId missing in Excel row");
+        }
+
+        // 2. Fetch dynamic trust token
+        String trustToken = JwtFetcher.fetchIb2bJwt();
+
+        // 3. Build request with all headers from Excel
+        OkHttpClient client = new OkHttpClient();
+        Request.Builder builder = new Request.Builder()
+                .url(baseUrl + path + chargeId + "/chargedtl")
+                .get();
+
+        for (Map.Entry<String,String> e : row.entrySet()) {
+            String key = e.getKey();
+            String val = e.getValue();
+            if (key == null || val == null) continue;
+
+            // Skip special columns we already used
+            if (key.equalsIgnoreCase("BaseUrl")
+                    || key.equalsIgnoreCase("Path")
+                    || key.equalsIgnoreCase("ChargeId")) continue;
+
+            // Replace placeholder {TRUST_TOKEN} if present
+            if (val.contains("{TRUST_TOKEN}")) {
+                val = val.replace("{TRUST_TOKEN}", trustToken);
+            }
+            builder.addHeader(key, val);
+        }
+
+        Request request = builder.build();
+
+        // 4. Execute and log
+        try (Response response = client.newCall(request).execute()) {
+            System.out.println("HTTP Status: " + response.code());
+            if (response.body() != null) {
+                System.out.println("Response body:\n" + response.body().string());
+            }
+        }
     }
 }
