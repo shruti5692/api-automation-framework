@@ -1,104 +1,79 @@
 package tests;
 
-import com.framework.utils.ConfigManager;
-import com.framework.utils.ExcelUtils;
-import com.framework.utils.JwtFetcher;
-import okhttp3.*;
-import org.json.JSONObject;
+import org.framework.utils.ConfigManager;
+import org.framework.utils.ExcelUtils;
+import org.framework.utils.JwtFetcher;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
-import java.util.*;
+import okhttp3.*;   // OkHttp client
 
-/**
- * SE78 API automation:
- *  - Validates mandatory field & length checks for ChargeID.
- *  - Reads all scenarios from Excel sheet "SE78" (positive & negative).
- */
+import java.util.*;
+import java.util.concurrent.TimeUnit;
+
 public class SE78Test {
 
-    private static final String EXCEL_PATH  =
+    private static final String EXCEL_PATH =
             System.getProperty("user.dir") + "/src/test/resources/TestData.xlsx";
-    private static final String SHEET_NAME  = "SE78";
+    private static final String SHEET = "SE78";
+
+    private final OkHttpClient client = new OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build();
 
     @DataProvider(name = "se78Data")
     public Object[][] se78Data() throws Exception {
-        List<Map<String,String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
+        List<Map<String,String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET);
         Object[][] data = new Object[rows.size()][1];
-        for (int i = 0; i < rows.size(); i++) data[i][0] = rows.get(i);
+        for (int i=0;i<rows.size();i++) data[i][0] = rows.get(i);
         return data;
     }
 
     @Test(dataProvider = "se78Data")
-    public void validateChargeIdRules(Map<String,String> row) throws Exception {
+    public void verifySE78Scenarios(Map<String,String> row) throws Exception {
 
-        String testCaseID  = row.get("TestCaseID");
-        String chargeId    = row.get("ChargeID");
-        String headersJson = row.get("Headers");
-        int expectedStatus = Integer.parseInt(row.get("ExpectedStatusCode"));
-        String expectedKey = row.get("ExpectedErrorKey");
-        String expectedMsg = row.get("ExpectedErrorMsg");
+        String testId   = row.get("TestCaseID");
+        String chargeId = row.get("ChargeID"); // may be blank
+        String expStatus= row.get("ExpectedStatus");
+        String expCode  = row.get("ExpectedReturnCode");
+        String expForm  = row.get("ExpectedFormStatus");
 
-        // --- Build headers directly with org.json ---
-        Map<String,String> headers = new LinkedHashMap<>();
-        if (headersJson != null && !headersJson.trim().isEmpty()) {
-            JSONObject j = new JSONObject(headersJson);
-            for (String k : j.keySet()) {
-                headers.put(k, j.getString(k));
+        // Build URL from config, replacing {chargeId}
+        String baseUrl  = ConfigManager.get("se78.url");
+        String finalUrl = baseUrl.replace("{chargeId}",
+                              (chargeId==null || chargeId.isEmpty()) ? "" : chargeId);
+
+        // Base headers from Excel JSON (optional)
+        Map<String,String> headers = ExcelUtils.jsonToMap(row.get("Headers"));
+        headers.put("Content-Type","application/json");
+        headers.put("Authorization","Bearer " + JwtFetcher.fetchJwt());
+
+        Request.Builder reqBuilder = new Request.Builder().url(finalUrl);
+        headers.forEach(reqBuilder::addHeader);
+
+        Request request = reqBuilder.get().build();
+
+        try (Response response = client.newCall(request).execute()) {
+            int actualStatus = response.code();
+            Assert.assertEquals(actualStatus,
+                    Integer.parseInt(expStatus),
+                    "HTTP status mismatch for "+testId);
+
+            String body = response.body() != null ? response.body().string() : "";
+            if (!expCode.isEmpty()) {
+                Assert.assertTrue(body.contains("\"returnCode\":\""+expCode+"\""),
+                        "Expected returnCode "+expCode+" in response for "+testId);
             }
-        }
-        headers.put("Content-Type", "application/json");
-        headers.put("Accept", "application/json");
-        String jwt = JwtFetcher.fetchI2BJwt();   // your existing new JWT method
-        headers.put("Authorization", "Bearer " + jwt);
-        System.out.println("Fetched JWT: " + jwt);
-
-        // --- Request body ---
-        JSONObject body = new JSONObject();
-        body.put("ChargeID", chargeId == null ? "" : chargeId.trim());
-
-        RequestBody reqBody = RequestBody.create(
-                body.toString(), MediaType.parse("application/json"));
-
-        // Base URL from config.properties
-        String baseUrl = ConfigManager.get("se78.base.url");
-
-        Request.Builder reqBuilder = new Request.Builder()
-                .url(baseUrl)
-                .post(reqBody);
-
-        for (Map.Entry<String,String> e : headers.entrySet()) {
-            if (e.getKey() != null && !e.getKey().trim().isEmpty()) {
-                reqBuilder.addHeader(e.getKey(), e.getValue());
+            if (expForm != null && !expForm.isEmpty()) {
+                Assert.assertTrue(body.contains("\"formStatus\":\""+expForm+"\""),
+                        "Expected formStatus "+expForm+" in response for "+testId);
             }
+            ExcelUtils.writeResult(EXCEL_PATH, SHEET, testId, "PASS");
+        } catch (AssertionError ae) {
+            ExcelUtils.writeResult(EXCEL_PATH, SHEET, testId, "FAIL");
+            throw ae;
         }
-
-        OkHttpClient client = new OkHttpClient();
-        Response response = client.newCall(reqBuilder.build()).execute();
-
-        int actualStatus = response.code();
-        String respBody = response.body() != null ? response.body().string() : "";
-        System.out.println("API Response: " + respBody);
-
-        boolean pass;
-        if (expectedStatus == 200) {
-            pass = (actualStatus == 200);
-        } else {
-            pass = (actualStatus == expectedStatus);
-            if (pass && expectedKey != null && !expectedKey.isEmpty()) {
-                JSONObject respJson = new JSONObject(respBody);
-                String errKey = respJson.optString("errorKey");
-                String errMsg = respJson.optString("errorMessage");
-                pass = expectedKey.equalsIgnoreCase(errKey) &&
-                       (expectedMsg == null || expectedMsg.isEmpty() || errMsg.contains(expectedMsg));
-            }
-        }
-
-        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseID, pass ? "PASS" : "FAIL");
-
-        Assert.assertTrue(pass,
-            "Failed TestCase: " + testCaseID + "\nExpectedStatus=" + expectedStatus +
-            "\nActualStatus=" + actualStatus + "\nBody=" + respBody);
     }
 }
