@@ -114,3 +114,37 @@ public class ExcelUtils {
         if (!updated) throw new IllegalStateException("Could not find TestCaseID " + testCaseId + " to write result");
     }
 }
+
+/**
+     * Very small JSON-to-Map parser for simple flat JSON objects such as:
+     * {"key":"value","k2":"v2"}
+     * It ignores whitespace and does not support nested objects/arrays.
+     */
+    public static Map<String,String> jsonToMap(String json) {
+        Map<String,String> map = new LinkedHashMap<>();
+        if (json == null || json.trim().isEmpty()) return map;
+
+        String trimmed = json.trim();
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+            trimmed = trimmed.substring(1, trimmed.length()-1);
+        }
+        // split by comma that are not inside quotes (simple case: no nested JSON)
+        String[] pairs = trimmed.split("\\s*,\\s*");
+        for (String p : pairs) {
+            if (p.isEmpty()) continue;
+            String[] kv = p.split("\\s*:\\s*", 2);
+            if (kv.length == 2) {
+                String key = kv[0].trim();
+                String val = kv[1].trim();
+                // strip quotes if present
+                if (key.startsWith("\"") && key.endsWith("\"")) {
+                    key = key.substring(1, key.length()-1);
+                }
+                if (val.startsWith("\"") && val.endsWith("\"")) {
+                    val = val.substring(1, val.length()-1);
+                }
+                map.put(key, val);
+            }
+        }
+        return map;
+    }
