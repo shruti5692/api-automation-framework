@@ -1,87 +1,119 @@
 package tests;
 
+import com.framework.utils.ExcelUtils;
+import com.framework.utils.JwtFetcher;
 import okhttp3.*;
 import org.json.JSONObject;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
-import utils.ExcelUtils;      // make sure this can read/write Excel rows
-import utils.JwtFetcher;     // your existing JWT helper
 
-import java.util.Iterator;
+import java.io.File;
+import java.util.List;
 import java.util.Map;
 
 public class SE78Test {
 
-    private final OkHttpClient client = new OkHttpClient();
+    // Adjust these to your project structure
+    private static final String EXCEL_PATH = "src/test/resources/TestData.xlsx";
+    private static final String SHEET_NAME = "SE78";
 
-    /**
-     * Reads rows from TestData.xlsx / SE78 sheet.
-     * Each row must have columns:
-     *   TestCaseID | ChargeID | Headers | ExpectedOutput | Result
-     */
-    @DataProvider(name = "se78Data")
-    public Object[][] se78Data() throws Exception {
-        // ExcelUtils.readSheet should return Object[][] where each element is a Map<String,String>
-        return ExcelUtils.readSheet("TestData.xlsx", "SE78");
+    @DataProvider(name = "excelData")
+    public Object[][] excelData() throws Exception {
+        List<Map<String, String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
+        Object[][] data = new Object[rows.size()][1];
+        for (int i = 0; i < rows.size(); i++) {
+            data[i][0] = rows.get(i);
+        }
+        return data;
     }
 
-    @Test(dataProvider = "se78Data")
-    public void callSecurityChargeApi(Map<String,String> row) throws Exception {
+    @Test(dataProvider = "excelData")
+    public void callSecurityChargeApi(Map<String, String> row) throws Exception {
+        String testCaseId = row.get("TestCaseID");
+        String chargeId   = row.get("ChargeID");
+        String headersStr = row.get("Headers");
+        String expected   = row.get("ExpectedOutput");
 
-        String testId   = row.get("TestCaseID");
-        String chargeId = row.get("ChargeID");
-        String expected = row.get("ExpectedOutput");   // full JSON string for quick match
-        String headers  = row.get("Headers");          // JSON object as text
+        OkHttpClient client = new OkHttpClient();
 
-        System.out.println("Running test: " + testId + " for ChargeID: " + chargeId);
-
-        // Parse Excel headers JSON
-        JSONObject headerObj = new JSONObject(headers);
-
-        // Build request
-        Request.Builder builder = new Request.Builder()
-                .url("https://digitaldev-int-rbwm.systems.uk.hsbc/cb-rps-05/"
-                        + "gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy/v1/securities/"
-                        + chargeId + "/chargedtl")
-                .get();
-
-        // Add headers from Excel
-        Iterator<String> keys = headerObj.keys();
-        while (keys.hasNext()) {
-            String key = keys.next();
-            builder.addHeader(key, headerObj.getString(key));
+        // ---------- Build Headers ----------
+        Headers.Builder headerBuilder = new Headers.Builder();
+        // parse headers JSON from excel column "Headers"
+        if (headersStr != null && !headersStr.trim().isEmpty()) {
+            JSONObject headersJson = new JSONObject(headersStr);
+            for (String key : headersJson.keySet()) {
+                String value = headersJson.optString(key, "");
+                if (key == null || key.trim().isEmpty()) {
+                    throw new IllegalArgumentException("Header name is empty in TestCase " + testCaseId);
+                }
+                headerBuilder.add(key.trim(), value);
+            }
         }
 
-        // Add JWT from fetcher
-        String jwt = JwtFetcher.fetchIb2bJwt();
-        builder.addHeader("X-HSBC-E2E-Trust-Token", jwt);
+        // add JWT from the new translator method
+        String jwt = JwtFetcher.fetchI2B2Jwt();
+        System.out.println("JwtFetcher fetched iB2B JWT: " + jwt);
+        headerBuilder.add("Authorization", "Bearer " + jwt);
 
-        Request request = builder.build();
+        // ---------- Build Request ----------
+        HttpUrl url = new HttpUrl.Builder()
+                .scheme("https")
+                .host("cmb-ib2b-dsp-pprod-eu.systems.uk.hsbc")
+                .port(8443)
+                .addPathSegments("dsp/security/charges/" + chargeId.trim())
+                .build();
 
-        String responseBody;
+        Request request = new Request.Builder()
+                .url(url)
+                .headers(headerBuilder.build())
+                .get()
+                .build();
+
+        String result;
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                throw new RuntimeException("HTTP call failed: " + response.code());
+                result = "Fail : HTTP " + response.code();
+                ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
+                Assert.fail(result);
             }
-            responseBody = response.body().string();
+
+            String responseBody = response.body() != null ? response.body().string() : "";
+            System.out.println("API Response: " + responseBody);
+
+            JSONObject actualJson   = new JSONObject(responseBody);
+            JSONObject expectedJson = new JSONObject(expected);
+
+            // Simple equality check (you can make it partial if needed)
+            if (jsonEquals(expectedJson, actualJson)) {
+                result = "Pass";
+                ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
+            } else {
+                result = "Fail : JSON mismatch";
+                ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
+                Assert.fail(result);
+            }
+        } catch (Exception ex) {
+            result = "Fail : " + ex.getMessage();
+            ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseId, result);
+            throw ex;
         }
+    }
 
-        System.out.println("API Response: " + responseBody);
-
-        // Simple validation – just check expected snippet exists
-        boolean pass = responseBody.contains("FormStatus")
-                       && responseBody.contains("\"SGN\"");
-
-        // Optional stricter check:
-        if (expected != null && !expected.isBlank()) {
-            pass = pass && responseBody.contains(expected.trim());
+    /**
+     * Basic deep comparison of two JSONObjects.
+     */
+    private boolean jsonEquals(JSONObject expected, JSONObject actual) {
+        if (!expected.keySet().equals(actual.keySet())) return false;
+        for (String key : expected.keySet()) {
+            Object eVal = expected.get(key);
+            Object aVal = actual.get(key);
+            if (eVal instanceof JSONObject && aVal instanceof JSONObject) {
+                if (!jsonEquals((JSONObject) eVal, (JSONObject) aVal)) return false;
+            } else if (!eVal.equals(aVal)) {
+                return false;
+            }
         }
-
-        // Write result back to Excel
-        ExcelUtils.writeResult("TestData.xlsx", "SE78", testId, pass ? "PASS" : "FAIL");
-
-        // Hard assert so the test shows failure in TestNG report
-        Assert.assertTrue(pass, "Response did not match expected output for " + testId);
+        return true;
     }
 }
