@@ -1,1 +1,19 @@
-{ "Authorization":"Basic VEFWR05BOmdpcmkxOTg5", "X-HSBC-Channel-Id":"OHB", "X-HSBC-User-Id":"43998226", "Content-Type":"application/json" }	{ "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse": { "responseMessage": { "responseBody": { "FormStatus":"SGN", "errorCode":0, "cyclicCount":14 } } } }	
+{
+  "Cookie": "LtpaToken2-...",
+  "Authorization": "Basic VEFWR05BOmdpcmkxOTg5",
+  "Content-Type": "application/json",
+  "X-HSBC-Channel-Id": "OHB",
+  "X-HSBC-Chnl-Country": "1",
+  "X-HSBC-Chnl-Group-Member": "HBEU",
+  "X-HSBC-Consumer-Id": "1",
+  "X-HSBC-GBGF": "1",
+  "X-HSBC-Global-Channel-Id": "1",
+  "X-HSBC-IP-Id": "136.46.24.54",
+  "X-HSBC-Request-Correlation-Id": "123498",
+  "X-HSBC-Session-Correlation-Id": "Girisute",
+  "X-HSBC-Sort-Code": "400788",
+  "X-HSBC-Src-Device-Id": "1234",
+  "X-HSBC-Src-UserAgent": "Apache-HttpClient/4.5.6 (Java/1.8.0_112)",
+  "X-HSBC-User-Id": "43998226",
+  "X-HSBC-Locale": "1"
+}
