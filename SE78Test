@@ -1,8 +1,10 @@
 package tests;
 
-import org.framework.utils.ConfigManager;
-import org.framework.utils.ExcelUtils;
-import org.framework.utils.JwtFetcher;
+import com.framework.utils.ConfigManager;
+import com.framework.utils.ExcelUtils;
+import com.framework.utils.JwtFetcher;
+import okhttp3.*;
+import org.json.JSONObject;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
@@ -10,90 +12,87 @@ import org.testng.annotations.Test;
 import java.util.*;
 
 /**
- * Automation for SE78 API mandatory & length validations.
- * Uses a single Excel sheet with a CaseType column (POS / NEG).
+ * SE78 API test:
+ *  - Validates mandatory and length checks for ChargeID.
+ *  - Positive and negative test cases are read from Excel.
  */
 public class SE78Test {
 
-    private static final String EXCEL_PATH = System.getProperty("user.dir") + "/TestData.xlsx";
-    private static final String SHEET_NAME = "SE78";
+    private static final String EXCEL_PATH  = System.getProperty("user.dir") + "/SE78TestData.xlsx";
+    private static final String SHEET_NAME  = "SE78_Cases";
 
-    // ---------------------- Data Providers ----------------------
-
-    @DataProvider(name = "positiveCases")
-    public Object[][] positiveCases() throws Exception {
-        return loadCases("POS");
-    }
-
-    @DataProvider(name = "negativeCases")
-    public Object[][] negativeCases() throws Exception {
-        return loadCases("NEG");
-    }
-
-    private Object[][] loadCases(String type) throws Exception {
+    @DataProvider(name = "se78Data")
+    public Object[][] se78Data() throws Exception {
         List<Map<String,String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
-        List<Map<String,String>> filtered = new ArrayList<>();
-        for (Map<String,String> r : rows) {
-            if (type.equalsIgnoreCase(r.get("CaseType"))) {
-                filtered.add(r);
-            }
-        }
-        Object[][] data = new Object[filtered.size()][1];
-        for (int i = 0; i < filtered.size(); i++) data[i][0] = filtered.get(i);
+        Object[][] data = new Object[rows.size()][1];
+        for (int i = 0; i < rows.size(); i++) data[i][0] = rows.get(i);
         return data;
     }
 
-    // ---------------------- Tests ----------------------
+    @Test(dataProvider = "se78Data")
+    public void validateChargeIdRules(Map<String,String> row) throws Exception {
 
-    @Test(dataProvider = "positiveCases")
-    public void testPositiveCases(Map<String,String> row) throws Exception {
-        executeTest(row, true);
-    }
-
-    @Test(dataProvider = "negativeCases")
-    public void testNegativeCases(Map<String,String> row) throws Exception {
-        executeTest(row, false);
-    }
-
-    // ---------------------- Core Logic ----------------------
-
-    private void executeTest(Map<String,String> row, boolean positive) throws Exception {
-        String testId  = row.get("TestCaseID");
-        String chargeId = row.get("ChargeID");
+        String testCaseID  = row.get("TestCaseID");
+        String chargeId    = row.get("ChargeID");
         String headersJson = row.get("Headers");
-        int expectedStatus = Integer.parseInt(row.get("ExpectedStatus"));
+        int expectedStatus = Integer.parseInt(row.get("ExpectedStatusCode"));
+        String expectedKey = row.get("ExpectedErrorKey");
+        String expectedMsg = row.get("ExpectedErrorMsg");
 
-        // 1. Build headers
+        // --- Build headers ---
         Map<String,String> headers = JsonHelper.toMap(headersJson);
-        String jwt = JwtFetcher.fetchJwt(ConfigManager.get("staff.username"));
-        System.out.println("JwtFetcher fetched JWT: " + jwt); // for reference
-        headers.put("Authorization", "Bearer " + jwt);
         headers.put("Content-Type", "application/json");
         headers.put("Accept", "application/json");
+        String jwt = JwtFetcher.fetchI2BJwt();   // your new method for iB2B token
+        headers.put("Authorization", "Bearer " + jwt);
+        System.out.println("Fetched JWT: " + jwt);
 
-        // 2. Build body (simple JSON payload with ChargeID)
-        String requestBody = "{\"ChargeID\":\"" + (chargeId == null ? "" : chargeId) + "\"}";
+        // --- Build request body ---
+        JSONObject body = new JSONObject();
+        body.put("ChargeID", chargeId == null ? "" : chargeId.trim());
 
-        // 3. Call SE78 API
-        String url = ConfigManager.get("api.base.url") + "/se78/charge";
-        HttpResponse resp = SimpleHttp.post(url, headers, requestBody);
+        RequestBody reqBody = RequestBody.create(
+                body.toString(), MediaType.parse("application/json"));
 
-        // 4. Validation
-        boolean pass;
-        if (positive) {
-            pass = resp.getStatusCode() == expectedStatus;
-        } else {
-            String expectedCode = row.get("ExpectedErrorCode");
-            String expectedMsg  = row.get("ExpectedErrorMessage");
-            pass = resp.getStatusCode() == expectedStatus &&
-                   resp.getBody().contains(expectedCode) &&
-                   resp.getBody().contains(expectedMsg);
+        String baseUrl = ConfigManager.get("api.se78.url"); // e.g. https://cmb-.../se78
+        Request.Builder reqBuilder = new Request.Builder()
+                .url(baseUrl)
+                .post(reqBody);
+
+        for (Map.Entry<String,String> e : headers.entrySet()) {
+            if (e.getKey() != null && !e.getKey().trim().isEmpty())
+                reqBuilder.addHeader(e.getKey(), e.getValue());
         }
 
-        // 5. Write result back to Excel & assert
-        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, pass ? "PASS" : "FAIL");
+        OkHttpClient client = new OkHttpClient();
+        Response response = client.newCall(reqBuilder.build()).execute();
+
+        int actualStatus = response.code();
+        String respBody = response.body() != null ? response.body().string() : "";
+        System.out.println("API Response: " + respBody);
+
+        boolean pass;
+
+        if (expectedStatus == 200) {
+            // Positive scenario: just match status
+            pass = (actualStatus == 200);
+        } else {
+            // Negative scenario: match status + error key/message if present
+            pass = (actualStatus == expectedStatus);
+            if (pass && !expectedKey.isEmpty()) {
+                JSONObject respJson = new JSONObject(respBody);
+                String errKey = respJson.optString("errorKey");
+                String errMsg = respJson.optString("errorMessage");
+                pass = expectedKey.equalsIgnoreCase(errKey)
+                        && (expectedMsg.isEmpty() || errMsg.contains(expectedMsg));
+            }
+        }
+
+        // Write result back to Excel
+        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testCaseID, pass ? "PASS" : "FAIL");
+
         Assert.assertTrue(pass,
-            "Failure for " + testId + "\nStatus=" + resp.getStatusCode() +
-            "\nBody=" + resp.getBody());
+            "Failed TestCase: " + testCaseID + "\nExpectedStatus=" + expectedStatus +
+            "\nActualStatus=" + actualStatus + "\nBody=" + respBody);
     }
 }
