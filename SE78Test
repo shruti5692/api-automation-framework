@@ -1,22 +1,18 @@
 @Test(dataProvider = "se78Data")
 public void callSecurityChargeApi(Map<String, String> row) throws Exception {
-    String testId        = row.getOrDefault("TestCaseID", "").trim();
-    String chargeId      = row.getOrDefault("ChargeID", "").trim();
-    String headers       = row.getOrDefault("Headers", "").trim();
-    String expected      = row.getOrDefault("ExpectedOutput", "").trim();
-    String expectedCode  = row.getOrDefault("ErrorCode", "").trim();      // NEW – optional field-wise check
-    String expStatusStr  = row.getOrDefault("ExpectedStatus", "").trim(); // NEW – expected HTTP status
+    String testId       = row.getOrDefault("TestCaseID", "").trim();
+    String chargeId     = row.getOrDefault("ChargeID", "");
+    String headers      = row.getOrDefault("Headers", "").trim();
+    String expected     = row.getOrDefault("ExpectedOutput", "").trim();
+    String expectedCode = row.getOrDefault("ErrorCode", "").trim();
+    String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
 
-    if (testId.isEmpty()) throw new IllegalArgumentException("TestCaseID missing in Excel row");
+    if (testId.isEmpty()) throw new IllegalArgumentException("TestCaseID missing");
 
-    System.out.println("=== Running SE78 test: " + testId + " (ChargeID=" + chargeId + ") ===");
+    System.out.println("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
-    // 1) Fetch JWT
     String jwt = JwtFetcher.fetchIb2bJwt();
-    System.out.println("SE78Test - fetched JWT (truncated): " +
-            (jwt == null ? "null" : jwt.substring(0, Math.min(64, jwt.length())) + "..."));
 
-    // 2) Headers from Excel
     Headers.Builder headerBuilder = new Headers.Builder();
     boolean trustTokenPresent = false;
     if (!headers.isBlank()) {
@@ -32,12 +28,21 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     }
     if (!trustTokenPresent) headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
 
-    // 3) URL
+    // ---------- length validations (informational) ----------
+    // if you simply want to log or assert before hitting API
+    if (!chargeId.isEmpty() && chargeId.length() < 12) {
+        System.out.println("Note: ChargeID shorter than 12 chars, expecting mandatory-field error");
+    }
+    if (!chargeId.isEmpty() && chargeId.length() > 12) {
+        System.out.println("Note: ChargeID longer than 12 chars, expecting length-validation error");
+    }
+    // --------------------------------------------------------
+
+    String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
     String url = "https://digitaldev-int-rbwm.systems.uk.hsbc" +
             "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy" +
-            "/v1/securities" + (chargeId.isEmpty() ? "" : ("/" + chargeId)) + "/chargedtl";
+            "/v1/securities/" + safeCharge + "/chargedtl";
 
-    // 4) Execute
     int status;
     String body;
     try (Response resp = client.newCall(
@@ -50,18 +55,17 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     System.out.println("HTTP " + status + " | Response (truncated): " +
             (body.length() > 500 ? body.substring(0, 500) + "..." : body));
 
-    // 5) Expected HTTP status check (if given)
+    // Expected HTTP status if specified
     if (!expStatusStr.isBlank()) {
         int expStatus = Integer.parseInt(expStatusStr);
         Assert.assertEquals(status, expStatus,
                 "Unexpected HTTP status for test " + testId);
     } else if (status != 200) {
-        // if no ExpectedStatus provided, fall back to 200 OK requirement
         ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "FAIL: HTTP " + status);
         Assert.fail("FAIL: HTTP " + status);
     }
 
-    // 6) Optional field-wise errorCode check
+    // Optional error code check
     if (!expectedCode.isBlank()) {
         boolean match = body.contains("\"code\":\"" + expectedCode + "\"")
                      || body.contains("\"errorCode\":" + expectedCode);
@@ -69,7 +73,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
                 "Expected error code " + expectedCode + " not found for " + testId);
     }
 
-    // 7) Optional partial JSON validation
+    // Partial JSON match
     boolean pass = true;
     String failReason = "";
     if (!expected.isBlank()) {
