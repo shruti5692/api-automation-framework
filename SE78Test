@@ -6,7 +6,6 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String expected     = row.getOrDefault("ExpectedOutput", "").trim();
     String expectedCode = row.getOrDefault("ErrorCode", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
-    String validationType = row.getOrDefault("ValidationType", "").trim(); // NEW: Error-only or Full JSON
 
     if (testId.isEmpty()) throw new IllegalArgumentException("TestCaseID missing");
 
@@ -67,16 +66,17 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         Assert.fail("FAIL: HTTP " + status);
     }
 
-    // ---------- Validation based on type ----------
+    // ---------- Determine validation type dynamically ----------
+    boolean isErrorOnly = expected.isBlank(); // true if ExpectedOutput is empty
     boolean pass = true;
     String failReason = "";
 
-    // ERROR_ONLY validation: check only error code
-    if ("ERROR_ONLY".equalsIgnoreCase(validationType) || expected.isBlank()) {
+    // ERROR_ONLY validation: check only nested error code
+    if (isErrorOnly) {
         if (!expectedCode.isBlank()) {
-            boolean match = expectedCodeMatches(responseJson, expectedCode);
-            pass = match;
-            if (!pass) failReason = "Expected error code " + expectedCode + " not found";
+            String actualCode = extractNestedErrorCode(responseJson);
+            pass = expectedCode.equals(actualCode);
+            if (!pass) failReason = "Expected error code " + expectedCode + " but got " + actualCode;
         }
     } else {
         // FULL_JSON validation
@@ -96,8 +96,25 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     Assert.assertTrue(pass, "SE78 test failed for " + testId + " : " + failReason);
 }
 
-// ---------- Helper method to validate error code ----------
-private boolean expectedCodeMatches(JSONObject responseJson, String expectedCode) {
-    return expectedCode.equals(responseJson.optString("code", "")) ||
-           expectedCode.equals(String.valueOf(responseJson.optInt("errorCode", -1)));
+// ---------- Helper method to extract nested error code ----------
+private String extractNestedErrorCode(JSONObject responseJson) {
+    try {
+        JSONObject svcResp = responseJson.optJSONObject(
+            "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse");
+        if (svcResp == null) return "";
+
+        JSONObject errorResp = svcResp.optJSONObject("errorResponse");
+        if (errorResp == null) return "";
+
+        JSONObject details = errorResp.optJSONObject("errorResponseDetails");
+        if (details == null) return "";
+
+        JSONArray errorInfo = details.optJSONArray("errorInfo");
+        if (errorInfo == null || errorInfo.isEmpty()) return "";
+
+        JSONObject firstError = errorInfo.getJSONObject(0);
+        return firstError.optString("code", "");
+    } catch (Exception e) {
+        return "";
+    }
 }
