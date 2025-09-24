@@ -1,73 +1,72 @@
-@Test(dataProvider = "se78Data")
-public void callSecurityChargeApi(Map<String, String> row) throws Exception {
-    String testId   = row.getOrDefault("TestCaseID", "").trim();
-    String chargeId = row.getOrDefault("ChargeID", "");   // allow blank!
-    String headers  = row.getOrDefault("Headers", "").trim();
-    String expCode  = row.getOrDefault("ErrorCode", "").trim();
+package tests;
 
-    if (testId.isEmpty()) throw new IllegalArgumentException("TestCaseID missing in Excel row");
+import io.restassured.RestAssured;
+import io.restassured.response.Response;
+import org.testng.Assert;
+import org.testng.annotations.DataProvider;
+import org.testng.annotations.Test;
+import utils.ExcelUtils;
+import utils.ConfigManager;
 
-    System.out.println("=== SE78: " + testId + " (ChargeID=" + chargeId + ") ===");
+import java.util.Iterator;
+import java.util.Map;
 
-    // fetch JWT
-    String jwt = JwtFetcher.fetchIb2bJwt();
-    Headers.Builder hb = new Headers.Builder();
-    if (!headers.isBlank()) {
-        JSONObject h = new JSONObject(headers);
-        for (String k : h.keySet()) {
-            String v = h.optString(k, "");
-            if (v.contains("{TRUST_TOKEN}")) v = v.replace("{TRUST_TOKEN}", jwt);
-            hb.add(k, v);
+public class SE78Test {
+
+    @DataProvider(name = "se78Data")
+    public Iterator<Object[]> getData() throws Exception {
+        // Sheet name is SE78, file is under src/test/resources/testdata.xlsx
+        return ExcelUtils.getDataProvider("testdata.xlsx", "SE78");
+    }
+
+    @Test(dataProvider = "se78Data")
+    public void callSecurityChargeApi(Map<String, String> row) {
+
+        String testId       = row.getOrDefault("TestCaseID", "").trim();
+        String chargeId     = row.getOrDefault("ChargeID", "").trim();
+        String expectedCode = row.getOrDefault("ErrorCode", "").trim();
+        String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
+
+        // URL comes from config.properties (under test/resources)
+        String baseUrl = ConfigManager.getProperty("se78.base.url");
+        String endpoint = chargeId.isEmpty()
+                ? baseUrl + "/gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1" // no charge id
+                : baseUrl + "/gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1/" + chargeId;
+
+        System.out.println("SE78: " + testId + " (ChargeID=" + chargeId + ") ===");
+
+        // ----- call API -----
+        Response resp = RestAssured
+                .given()
+                .headers(ExcelUtils.parseJsonHeaders(row.getOrDefault("Headers", "{}")))
+                .when()
+                .get(endpoint)
+                .then()
+                .extract()
+                .response();
+
+        int status = resp.statusCode();
+        System.out.println("HTTP " + status + " | Response: " + resp.asString());
+
+        // ----- status check -----
+        if (!expStatusStr.isEmpty()) {
+            int expectedStatus = Integer.parseInt(expStatusStr);
+            Assert.assertEquals(status, expectedStatus,
+                    "Unexpected HTTP status for " + testId);
         }
-    }
-    hb.add("X-HSBC-E2E-Trust-Token", jwt);
 
-    // build request (note: chargeId can be blank)
-    String url = ConfigManager.get("se78.url") + "/v1/securities/" + chargeId + "/chargedtl";
-
-    Request req = new Request.Builder()
-            .url(url)
-            .headers(hb.build())
-            .get()
-            .build();
-
-    String body;
-    int status;
-    try (Response resp = client.newCall(req).execute()) {
-        status = resp.code();
-        body = resp.body() == null ? "" : resp.body().string();
-    }
-
-    System.out.println("HTTP " + status + " | Response: " +
-            (body.length() > 400 ? body.substring(0, 400) + "..." : body));
-
-    boolean pass = true;
-    String failReason = "";
-
-    // ----- field-wise checks -----
-    try {
-        Assert.assertEquals(status, 400, "Expected HTTP 400 for empty ChargeID");
-
-        if (!expCode.isEmpty()) {
-            JSONObject json = new JSONObject(body);
-            // Navigate to error code inside nested JSON
-            String actualCode = json
-                .getJSONObject("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse")
-                .getJSONObject("errorResponse")
-                .getJSONObject("errorResponseDetails")
-                .getJSONArray("errorInfo")
-                .getJSONObject(0)
-                .getString("code");
-
-            Assert.assertEquals(actualCode, expCode,
-                    "Mismatch in expected error code");
+        // ----- optional errorCode check -----
+        if (!expectedCode.isEmpty()) {
+            boolean match = resp.asString().contains("\"code\":\"" + expectedCode + "\"")
+                         || resp.asString().contains("\"errorCode\":" + expectedCode);
+            Assert.assertTrue(match,
+                    "Expected error code " + expectedCode + " in response for " + testId);
         }
-    } catch (AssertionError ae) {
-        pass = false;
-        failReason = ae.getMessage();
-    }
 
-    ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId,
-            pass ? "PASS" : "FAIL: " + failReason);
-    Assert.assertTrue(pass, failReason);
+        // write PASS/FAIL back to Excel
+        ExcelUtils.writeResult("testdata.xlsx", "SE78", testId,
+                (status == (expStatusStr.isEmpty() ? status : Integer.parseInt(expStatusStr))) &&
+                (expectedCode.isEmpty() || resp.asString().contains(expectedCode))
+                        ? "PASS" : "FAIL");
+    }
 }
