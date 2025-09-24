@@ -6,15 +6,17 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String expected     = row.getOrDefault("ExpectedOutput", "").trim();
     String expectedCode = row.getOrDefault("ErrorCode", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
+    String validationType = row.getOrDefault("ValidationType", "").trim(); // NEW: Error-only or Full JSON
 
     if (testId.isEmpty()) throw new IllegalArgumentException("TestCaseID missing");
 
     System.out.println("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
+    // ---------- JWT & Headers ----------
     String jwt = JwtFetcher.fetchIb2bJwt();
-
     Headers.Builder headerBuilder = new Headers.Builder();
     boolean trustTokenPresent = false;
+
     if (!headers.isBlank()) {
         JSONObject headerObj = new JSONObject(headers);
         for (Iterator<String> it = headerObj.keys(); it.hasNext();) {
@@ -28,16 +30,15 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     }
     if (!trustTokenPresent) headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
 
-    // ---------- length validations (informational) ----------
-    // if you simply want to log or assert before hitting API
+    // ---------- ChargeID length info ----------
     if (!chargeId.isEmpty() && chargeId.length() < 12) {
         System.out.println("Note: ChargeID shorter than 12 chars, expecting mandatory-field error");
     }
     if (!chargeId.isEmpty() && chargeId.length() > 12) {
         System.out.println("Note: ChargeID longer than 12 chars, expecting length-validation error");
     }
-    // --------------------------------------------------------
 
+    // ---------- Call API ----------
     String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
     String url = "https://digitaldev-int-rbwm.systems.uk.hsbc" +
             "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy" +
@@ -45,42 +46,43 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
     int status;
     String body;
+    JSONObject responseJson;
     try (Response resp = client.newCall(
             new Request.Builder().url(url).headers(headerBuilder.build()).get().build()
     ).execute()) {
         status = resp.code();
         body   = resp.body() == null ? "" : resp.body().string();
+        responseJson = body.isEmpty() ? new JSONObject() : new JSONObject(body);
     }
 
     System.out.println("HTTP " + status + " | Response (truncated): " +
             (body.length() > 500 ? body.substring(0, 500) + "..." : body));
 
-    // Expected HTTP status if specified
+    // ---------- HTTP status validation ----------
     if (!expStatusStr.isBlank()) {
         int expStatus = Integer.parseInt(expStatusStr);
-        Assert.assertEquals(status, expStatus,
-                "Unexpected HTTP status for test " + testId);
+        Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testId);
     } else if (status != 200) {
         ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "FAIL: HTTP " + status);
         Assert.fail("FAIL: HTTP " + status);
     }
 
-    // Optional error code check
-    if (!expectedCode.isBlank()) {
-        boolean match = body.contains("\"code\":\"" + expectedCode + "\"")
-                     || body.contains("\"errorCode\":" + expectedCode);
-        Assert.assertTrue(match,
-                "Expected error code " + expectedCode + " not found for " + testId);
-    }
-
-    // Partial JSON match
+    // ---------- Validation based on type ----------
     boolean pass = true;
     String failReason = "";
-    if (!expected.isBlank()) {
+
+    // ERROR_ONLY validation: check only error code
+    if ("ERROR_ONLY".equalsIgnoreCase(validationType) || expected.isBlank()) {
+        if (!expectedCode.isBlank()) {
+            boolean match = expectedCodeMatches(responseJson, expectedCode);
+            pass = match;
+            if (!pass) failReason = "Expected error code " + expectedCode + " not found";
+        }
+    } else {
+        // FULL_JSON validation
         try {
             JSONObject expJson = new JSONObject(expected);
-            JSONObject actJson = new JSONObject(body);
-            pass = jsonContains(expJson, actJson);
+            pass = jsonContains(expJson, responseJson);
             if (!pass) failReason = "Response JSON does not contain ExpectedOutput";
         } catch (Exception ex) {
             pass = false;
@@ -88,7 +90,14 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         }
     }
 
+    // ---------- Write result ----------
     String result = pass ? "PASS" : "FAIL: " + (failReason.isEmpty() ? "mismatch" : failReason);
     ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, result);
     Assert.assertTrue(pass, "SE78 test failed for " + testId + " : " + failReason);
+}
+
+// ---------- Helper method to validate error code ----------
+private boolean expectedCodeMatches(JSONObject responseJson, String expectedCode) {
+    return expectedCode.equals(responseJson.optString("code", "")) ||
+           expectedCode.equals(String.valueOf(responseJson.optInt("errorCode", -1)));
 }
