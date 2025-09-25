@@ -4,14 +4,14 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String chargeId = row.getOrDefault("ChargeID", "").trim();
     String headers  = row.getOrDefault("Headers", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
-    String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim(); // Excel JSON for selective fields
+    String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim(); // Optional Excel JSON
 
     logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
+    // ----- DB fetch for selected test cases -----
     String dbOpenStatus = "UNKNOWN", dbFormStatus = "", dbCycCnt = "";
     boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
 
-    // ----- DB fetch -----
     if (isDbRequired && !chargeId.isEmpty()) {
         logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
         try {
@@ -23,17 +23,13 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
                 dbCycCnt     = parts.length > 3 ? parts[3] : "";
                 logBoth("DB Result: OPEN_CLO_STA='" + dbOpenStatus +
                         "', FormStatus='" + dbFormStatus + "', CYC_CNT='" + dbCycCnt + "'");
-            } else {
-                logBoth("[WARN] ChargeID not found in DB");
-            }
+            } else logBoth("[WARN] ChargeID not found in DB");
         } catch (Exception e) {
             logBoth("[ERROR] Exception while fetching DB data: " + e.getMessage());
         }
-    } else {
-        logBoth("DB fetch skipped for this test case");
-    }
+    } else logBoth("DB fetch skipped for this test case");
 
-    // ----- Build headers -----
+    // ----- Headers & API Call -----
     logBoth("Step: Preparing HTTP headers for API call");
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
@@ -55,7 +51,6 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         logBoth("Header added: X-HSBC-E2E-Trust-Token=" + jwt);
     }
 
-    // ----- API Call -----
     String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
     String url = "https://digitaldev-int-rbwm.systems.uk.hsbc"
                + "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy"
@@ -73,11 +68,10 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         responseJson = body.isEmpty() ? new JSONObject() : new JSONObject(body);
     }
 
-    logBoth("Step: Received API response");
     logBoth("HTTP Status: " + status);
     logBoth("Response Body (truncated): " + (body.length() > 500 ? body.substring(0, 500) + "..." : body));
 
-    // ----- Status check -----
+    // ----- Status Validation -----
     if (!expStatusStr.isBlank()) {
         int expStatus = Integer.parseInt(expStatusStr);
         Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testId);
@@ -90,36 +84,31 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
     if (isDbRequired) {
         logBoth("Step: Performing DB field-wise validation");
-
-        Map<String, String> dbFields = new HashMap<>();
         if ("TC04_ClosedChargeID".equals(testId)) {
-            // ClosedChargeID: check nested error code = 4310
-            String actualCode = extractNestedErrorCode(responseJson);
+            // ClosedChargeID: validate nested error code
+            String actualCode = getNestedValue(responseJson,
+                    "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse.errorResponseDetails.errorInfo[0].code");
             logBoth("Validating return code -> Expected: 4310, Actual: " + actualCode);
             if (!"4310".equals(actualCode)) { pass = false; failReason += "Return code mismatch"; }
         } else {
-            // OpenChargeID: validate FormStatus, cyclicCount, errorCode
-            dbFields.put("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.FormStatus", dbFormStatus);
-            dbFields.put("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.cyclicCount", dbCycCnt);
-            dbFields.put("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.errorCode", "0");
-
+            Map<String, String> dbFields = Map.of(
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.FormStatus", dbFormStatus,
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.cyclicCount", dbCycCnt,
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.errorCode", "0"
+            );
             boolean dbPass = validateFields(dbFields, responseJson);
             if (!dbPass) pass = false;
         }
     } else if (!expectedFieldsJson.isBlank()) {
         logBoth("Step: Performing Excel field-wise validation");
-
         JSONObject expFieldsJson = new JSONObject(expectedFieldsJson);
         Map<String, String> excelFields = new HashMap<>();
-        for (String k : expFieldsJson.keySet()) {
-            excelFields.put(k, expFieldsJson.get(k).toString());
-        }
-
+        for (String k : expFieldsJson.keySet()) excelFields.put(k, expFieldsJson.get(k).toString());
         boolean excelPass = validateFields(excelFields, responseJson);
         if (!excelPass) pass = false;
     }
 
-    // ----- Result Logging -----
+    // ----- Test Result -----
     if (pass) logPass("Test passed for " + testId);
     else logFail(failReason);
 
