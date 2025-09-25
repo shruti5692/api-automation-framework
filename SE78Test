@@ -54,11 +54,11 @@ public class SE78Tests {
 
         logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
-        // ----- DB Fetch (only for DB-required test cases) -----
+        // ------------------ DB Fetch ------------------
         String dbOpenStatus = "UNKNOWN", dbFormStatus = "", dbCycCnt = "";
+        Map<String, String> chargeData = null;
         boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
 
-        Map<String, String> chargeData = null;
         if (isDbRequired && !chargeId.isEmpty()) {
             logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
             try {
@@ -75,7 +75,7 @@ public class SE78Tests {
             logBoth("DB fetch skipped for this test case");
         }
 
-        // ----- Prepare Headers & JWT -----
+        // ------------------ Prepare Headers & JWT ------------------
         String jwt = JwtFetcher.fetchIb2bJwt();
         Headers.Builder headerBuilder = new Headers.Builder();
         boolean trustTokenPresent = false;
@@ -97,7 +97,7 @@ public class SE78Tests {
             logBoth("Header added: X-HSBC-E2E-Trust-Token=" + jwt);
         }
 
-        // ----- API Call -----
+        // ------------------ API Call ------------------
         String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
         String url = "https://digitaldev-int-rbwm.systems.uk.hsbc" +
                      "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy" +
@@ -118,14 +118,14 @@ public class SE78Tests {
         logBoth("HTTP Status: " + status);
         logBoth("Response Body (truncated): " + (body.length() > 500 ? body.substring(0, 500) + "..." : body));
 
-        // ----- Status Validation -----
+        // ------------------ Status Validation ------------------
         if (!expStatusStr.isBlank()) {
             int expStatus = Integer.parseInt(expStatusStr);
             Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testId);
             logBoth("Expected HTTP status matched: " + expStatus);
         }
 
-        // ----- Field-wise Validation -----
+        // ------------------ Field-wise Validation ------------------
         boolean pass = true;
         if (isDbRequired) {
             logBoth("Step: Performing DB-driven field validation");
@@ -146,7 +146,19 @@ public class SE78Tests {
                         "0"
                 );
             }
-            pass = ApiValidationUtils.validateFields(fieldsToValidate, responseJson, test);
+
+            // Validate each field and log expected vs actual
+            for (Map.Entry<String, String> entry : fieldsToValidate.entrySet()) {
+                String path = entry.getKey();
+                String expectedVal = entry.getValue();
+                String actualVal = ApiValidationUtils.getValueFromJson(responseJson, path);
+
+                String result = expectedVal.equals(actualVal) ? "PASS" : "FAIL";
+                logBoth(String.format("Field validation -> %s | Expected: %s | Actual: %s | Result: %s",
+                        path, expectedVal, actualVal, result));
+
+                if (!result.equals("PASS")) pass = false;
+            }
         } else if (!expectedFieldsJson.isBlank()) {
             logBoth("Step: Performing Excel-driven field validation");
             JSONObject expJson = new JSONObject(expectedFieldsJson);
@@ -155,7 +167,7 @@ public class SE78Tests {
             pass = ApiValidationUtils.validateFields(excelFields, responseJson, test);
         }
 
-        // ----- Test Result -----
+        // ------------------ Test Result ------------------
         if (pass) logPass("Test passed for " + testId);
         else logFail("Field validation failed for " + testId);
 
@@ -165,9 +177,7 @@ public class SE78Tests {
         logBoth("=== End of Test: " + testId + " ===\n");
     }
 
-    // ------------------------
-    // Logging helpers
-    // ------------------------
+    // ------------------------ Logging helpers ------------------------
     private void logBoth(String msg) {
         test.log(Status.INFO, msg);
         Reporter.log(msg, true);
