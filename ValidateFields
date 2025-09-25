@@ -1,0 +1,23 @@
+/**
+ * Compares expected values against API response for selected fields.
+ * Logs each field with PASS/FAIL.
+ */
+private boolean validateFields(Map<String, String> expectedFields, JSONObject apiResponse) {
+    boolean pass = true;
+
+    for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
+        String key = entry.getKey();          // Can be nested: "responseMessage.responseBody.errorCode"
+        String expected = entry.getValue().trim();
+        String actual = getNestedValue(apiResponse, key);
+
+        boolean fieldPass = expected.equals(actual);
+        if (!fieldPass) pass = false;
+
+        logBoth("Field validation -> " + key +
+                " | Expected: " + expected +
+                " | Actual: " + actual +
+                " | Result: " + (fieldPass ? "PASS" : "FAIL"));
+    }
+
+    return pass;
+}
