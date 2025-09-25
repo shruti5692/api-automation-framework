@@ -1,47 +1,50 @@
 package tests;
 
 import org.framework.utils.DBUtils;
-import java.util.*;
 
-/**
- * Single DB fetch method for both Closed and Open ChargeIDs.
- */
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
+
 public class DbFetchHelper {
 
+    private static final String CHARGE_QUERY =
+        "SELECT A.CHG_ID, B.OPEN_CLO_STA, A.CHG_FORM_STA, A.ACYC_CNT " +
+        "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
+        "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID=?";
+
     /**
-     * Fetch CHG_ID, OPEN_CLO_STA, CHG_FORM_STA, CYC_CNT
-     * Returns Set<String> in format: CHG_ID|OPEN_CLO_STA|CHG_FORM_STA|CYC_CNT
-     * For ClosedChargeID, CHG_FORM_STA and CYC_CNT may be empty strings.
+     * Fetch DB fields for a given ChargeID.
+     * Returns a Map with keys: CHG_ID, OPEN_CLO_STA, CHG_FORM_STA, CYC_CNT
      */
-    public static Set<String> fetchChargeData(String chargeId) throws Exception {
-        String query =
-            "SELECT A.CHG_ID, B.OPEN_CLO_STA, A.CHG_FORM_STA, A.CYC_CNT " +
-            "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
-            "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID=?";
+    public static Map<String, String> fetchChargeData(String chargeId) throws Exception {
+        List<Map<String, Object>> rows = DBUtils.executeQuery(CHARGE_QUERY, chargeId);
+        Map<String, String> result = new HashMap<>();
 
-        List<Map<String, Object>> rows = DBUtils.executeQuery(query, chargeId);
-        Set<String> result = new HashSet<>();
-
-        for (Map<String, Object> row : rows) {
-            Map<String, Object> normalized = new HashMap<>();
-            for (Map.Entry<String, Object> e : row.entrySet()) {
-                normalized.put(e.getKey().toUpperCase(), e.getValue());
-            }
-
-            String chgId      = String.valueOf(normalized.getOrDefault("CHG_ID", "")).trim();
-            String openSta    = String.valueOf(normalized.getOrDefault("OPEN_CLO_STA", "")).trim();
-            String formStatus = String.valueOf(normalized.getOrDefault("CHG_FORM_STA", "")).trim();
-            String cycCnt     = String.valueOf(normalized.getOrDefault("CYC_CNT", "")).trim();
-
-            result.add(chgId + "|" + openSta + "|" + formStatus + "|" + cycCnt);
+        if (!rows.isEmpty()) {
+            Map<String, Object> row = rows.get(0); // only first row
+            row.forEach((k, v) -> result.put(k.toUpperCase(), v == null ? "" : v.toString().trim()));
         }
 
         return result;
     }
 
-    // Optional: main method to test
+    // Optional: utility for logging fetched fields
+    public static void logChargeData(Map<String, String> chargeData) {
+        if (chargeData.isEmpty()) {
+            System.out.println("[DB] No data found for ChargeID");
+        } else {
+            System.out.println("[DB] Fetched fields:");
+            chargeData.forEach((k, v) -> System.out.println("  " + k + " = " + v));
+        }
+    }
+
+    // Example main for quick testing
     public static void main(String[] args) throws Exception {
-        String chargeId = "SC0000000043";
-        fetchChargeData(chargeId).forEach(System.out::println);
+        String chargeId = "SC0000000050";
+        Map<String, String> chargeData = fetchChargeData(chargeId);
+        logChargeData(chargeData);
     }
 }
