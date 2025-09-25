@@ -12,15 +12,13 @@ public class DbFetchHelper {
         "  AND LENGTH(RTRIM(PROD_ID)) = 14 " +
         "  AND OPEN_CLO_STA = 'O'";
 
-    // ✅ NEW QUERY
+    
     private static final String CHARGE_JOIN_QUERY =
         "SELECT A.CHG_ID, B.CUST_NO, B.OPEN_CLO_STA " +
         "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
-        "WHERE A.CHG_ID = B.PROD_ID";
+        "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID=?";
 
-    /**
-     * Existing method – unchanged
-     */
+    
     public static Set<String> fetchCustomerProducts(String customerNumber) throws Exception {
         List<Map<String,Object>> rows = DBUtils.executeQuery(CUSTOMER_PROD_QUERY, customerNumber);
         Set<String> result = new HashSet<>();
@@ -36,15 +34,10 @@ public class DbFetchHelper {
             result.add(cust + "|" + prodId + "|" + prodCd);
         }
         return result;
-    }
+}
 
-    /**
-     * 🔹 NEW METHOD
-     * Fetch rows from join of SEC_CHARGE and CUD_PROD_RELN.
-     * Returns each row as "CHG_ID|CUST_NO|OPEN_CLO_STA".
-     */
-    public static Set<String> fetchChargeJoinData() throws Exception {
-        List<Map<String,Object>> rows = DBUtils.executeQuery(CHARGE_JOIN_QUERY);
+    public static Set<String> fetchChargeJoinData(String chargeId) throws Exception {
+        List<Map<String,Object>> rows = DBUtils.executeQuery(CHARGE_JOIN_QUERY, chargeId);
         Set<String> result = new HashSet<>();
 
         for (Map<String,Object> row : rows) {
@@ -68,7 +61,7 @@ public class DbFetchHelper {
         prodRecords.forEach(System.out::println);
 
         // Call the new query
-        Set<String> chargeRecords = fetchChargeJoinData();
+        Set<String> chargeRecords = fetchChargeJoinData(SC0000000116);
         System.out.println("\nCharge Join Records:");
         chargeRecords.forEach(System.out::println);
     }
