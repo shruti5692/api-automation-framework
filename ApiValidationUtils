@@ -1,0 +1,72 @@
+package utils;
+
+import com.aventstack.extentreports.ExtentTest;
+import com.aventstack.extentreports.Status;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.testng.Reporter;
+
+import java.util.Map;
+
+public class ApiValidationUtils {
+
+    // --------------------------
+    // 1. Generic nested JSON getter
+    // --------------------------
+    public static String getNestedValue(Object json, String path) {
+        String[] parts = path.split("\\.");
+        Object current = json;
+
+        for (String part : parts) {
+            if (part.contains("[") && part.contains("]")) {
+                String key = part.substring(0, part.indexOf("["));
+                int index = Integer.parseInt(part.substring(part.indexOf("[") + 1, part.indexOf("]")));
+                if (current instanceof JSONObject) {
+                    JSONArray arr = ((JSONObject) current).optJSONArray(key);
+                    if (arr != null && arr.length() > index) {
+                        current = arr.get(index);
+                    } else return "MISSING";
+                } else return "MISSING";
+            } else {
+                if (current instanceof JSONObject) {
+                    if (((JSONObject) current).has(part)) {
+                        current = ((JSONObject) current).get(part);
+                    } else return "MISSING";
+                } else return "MISSING";
+            }
+        }
+        return current == null ? "MISSING" : String.valueOf(current).trim();
+    }
+
+    // --------------------------
+    // 2. Field-wise validation with logs
+    // --------------------------
+    public static boolean validateFields(Map<String, String> expectedFields, JSONObject responseJson, ExtentTest test) {
+        boolean allPass = true;
+
+        for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
+            String path = entry.getKey();
+            String expected = entry.getValue();
+            String actual = getNestedValue(responseJson, path);
+
+            boolean fieldPass = expected.equals(actual);
+            allPass &= fieldPass;
+
+            logField(test, path, expected, actual, fieldPass);
+        }
+
+        return allPass;
+    }
+
+    // --------------------------
+    // 3. Logging helper
+    // --------------------------
+    private static void logField(ExtentTest test, String path, String expected, String actual, boolean pass) {
+        String msg = "Field validation -> " + path +
+                     " | Expected: " + expected +
+                     " | Actual: " + actual +
+                     " | Result: " + (pass ? "PASS" : "FAIL");
+        test.log(pass ? Status.PASS : Status.FAIL, msg);
+        Reporter.log(msg, true);
+    }
+}
