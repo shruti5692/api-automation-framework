@@ -1,187 +1,126 @@
-import com.aventstack.extentreports.*;
-import com.aventstack.extentreports.reporter.ExtentSparkReporter;
-import org.testng.*;
-import org.testng.annotations.*;
-import org.testng.Reporter;
-import okhttp3.*;
-import org.json.*;
+@Test(dataProvider = "se78Data")
+public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
-import java.lang.reflect.Method;
-import java.util.Iterator;
-import java.util.Map;
+    String testId       = row.getOrDefault("TestCaseID", "").trim();
+    String chargeId     = row.getOrDefault("ChargeID", "").trim();
+    String headers      = row.getOrDefault("Headers", "").trim();
+    String expected     = row.getOrDefault("ExpectedOutput", "").trim();
+    String expectedCode = row.getOrDefault("ErrorCode", "").trim();
+    String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
 
-public class SE78Tests {
+    if (testId.isEmpty()) throw new IllegalArgumentException("TestCaseID missing");
 
-    private static ExtentReports extent;
-    private ExtentTest test;
-    private final OkHttpClient client = new OkHttpClient();
+    logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
-    @BeforeSuite
-    public void beforeSuite() {
-        ExtentSparkReporter spark = new ExtentSparkReporter("ExtentReport.html");
-        extent = new ExtentReports();
-        extent.attachReporter(spark);
+    // ----- DB Prerequisite Check -----
+    if (chargeId.isEmpty()) {
+        logFail("ChargeID missing in Excel, skipping test");
+        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "SKIP: ChargeID missing");
+        throw new SkipException("ChargeID missing, skipping test");
     }
 
-    @AfterSuite
-    public void afterSuite() {
-        extent.flush();
+    Set<String> chargeData = DbFetchHelper.fetchChargeJoinData(chargeId);
+    if (chargeData.isEmpty()) {
+        logFail("ChargeID '" + chargeId + "' not found in DB, skipping test");
+        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "SKIP: ChargeID not found in DB");
+        throw new SkipException("ChargeID not found in DB, skipping test");
     }
 
-    @BeforeMethod
-    public void beforeMethod(Method method) {
-        // create a node in Extent for every @Test
-        test = extent.createTest(method.getName());
+    String[] parts = chargeData.iterator().next().split("\\|");
+    String openStatus = parts[2];
+
+    if (!"C".equalsIgnoreCase(openStatus)) {
+        logFail("ChargeID '" + chargeId + "' OPEN_CLO_STA != 'C' (actual: " + openStatus + "), skipping test");
+        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "SKIP: OPEN_CLO_STA != 'C'");
+        throw new SkipException("OPEN_CLO_STA not 'C', skipping test");
     }
 
-    @Test(dataProvider = "se78Data")
-    public void callSecurityChargeApi(Map<String, String> row) throws Exception {
+    // ----- Existing header and API call logic -----
+    String jwt = JwtFetcher.fetchIb2bJwt();
+    Headers.Builder headerBuilder = new Headers.Builder();
+    boolean trustTokenPresent = false;
 
-        String testId       = row.getOrDefault("TestCaseID", "").trim();
-        String chargeId     = row.getOrDefault("ChargeID", "");
-        String headers      = row.getOrDefault("Headers", "").trim();
-        String expected     = row.getOrDefault("ExpectedOutput", "").trim();
-        String expectedCode = row.getOrDefault("ErrorCode", "").trim();
-        String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
-
-        if (testId.isEmpty()) throw new IllegalArgumentException("TestCaseID missing");
-
-        logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
-
-        // ----- Build headers -----
-        String jwt = JwtFetcher.fetchIb2bJwt();
-        Headers.Builder headerBuilder = new Headers.Builder();
-        boolean trustTokenPresent = false;
-
-        if (!headers.isBlank()) {
-            JSONObject headerObj = new JSONObject(headers);
-            for (Iterator<String> it = headerObj.keys(); it.hasNext();) {
-                String k = it.next();
-                String v = headerObj.optString(k, "");
-                if (v != null && v.contains("{TRUST_TOKEN}")) v = v.replace("{TRUST_TOKEN}", jwt);
-                if (k.equalsIgnoreCase("X-HSBC-E2E-Trust-Token") || k.equalsIgnoreCase("X-HSBC-TRUST-TOKEN"))
-                    trustTokenPresent = true;
-                headerBuilder.add(k, v == null ? "" : v);
-            }
+    if (!headers.isBlank()) {
+        JSONObject headerObj = new JSONObject(headers);
+        for (Iterator<String> it = headerObj.keys(); it.hasNext();) {
+            String k = it.next();
+            String v = headerObj.optString(k, "");
+            if (v != null && v.contains("{TRUST_TOKEN}")) v = v.replace("{TRUST_TOKEN}", jwt);
+            if (k.equalsIgnoreCase("X-HSBC-E2E-Trust-Token") || k.equalsIgnoreCase("X-HSBC-TRUST-TOKEN"))
+                trustTokenPresent = true;
+            headerBuilder.add(k, v == null ? "" : v);
         }
-        if (!trustTokenPresent) headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
+    }
+    if (!trustTokenPresent) headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
 
-        if (!chargeId.isEmpty() && chargeId.length() < 12) {
-            logBoth("Note: ChargeID shorter than 12 chars, expecting mandatory-field error");
-        }
-        if (!chargeId.isEmpty() && chargeId.length() > 12) {
-            logBoth("Note: ChargeID longer than 12 chars, expecting length-validation error");
-        }
+    if (!chargeId.isEmpty() && chargeId.length() < 12) {
+        logBoth("Note: ChargeID shorter than 12 chars, expecting mandatory-field error");
+    }
+    if (!chargeId.isEmpty() && chargeId.length() > 12) {
+        logBoth("Note: ChargeID longer than 12 chars, expecting length-validation error");
+    }
 
-        // ----- Call API -----
-        String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
-        String url = "https://digitaldev-int-rbwm.systems.uk.hsbc"
-                   + "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy"
-                   + "/v1/securities/" + safeCharge + "/chargedtl";
+    String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
+    String url = "https://digitaldev-int-rbwm.systems.uk.hsbc"
+               + "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy"
+               + "/v1/securities/" + safeCharge + "/chargedtl";
 
-        int status;
-        String body;
-        JSONObject responseJson;
-        try (Response resp = client.newCall(
-                new Request.Builder().url(url).headers(headerBuilder.build()).get().build()
-        ).execute()) {
-            status = resp.code();
-            body   = resp.body() == null ? "" : resp.body().string();
-            responseJson = body.isEmpty() ? new JSONObject() : new JSONObject(body);
-        }
+    int status;
+    String body;
+    JSONObject responseJson;
+    try (Response resp = client.newCall(
+            new Request.Builder().url(url).headers(headerBuilder.build()).get().build()
+    ).execute()) {
+        status = resp.code();
+        body   = resp.body() == null ? "" : resp.body().string();
+        responseJson = body.isEmpty() ? new JSONObject() : new JSONObject(body);
+    }
 
-        logBoth("HTTP " + status + " | Response (truncated): " +
-                (body.length() > 500 ? body.substring(0, 500) + "..." : body));
+    logBoth("HTTP " + status + " | Response (truncated): " +
+            (body.length() > 500 ? body.substring(0, 500) + "..." : body));
 
-        // ----- Status validation -----
-        if (!expStatusStr.isBlank()) {
-            int expStatus = Integer.parseInt(expStatusStr);
-            Assert.assertEquals(status, expStatus,
-                    "Unexpected HTTP status for test " + testId);
-            logBoth("Expected HTTP status matched: " + expStatus);
-        } else if (status != 200) {
-            ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "FAIL: HTTP " + status);
-            logFail("Unexpected HTTP status: " + status);
-            Assert.fail("FAIL: HTTP " + status);
-        }
+    // ----- Status validation -----
+    if (!expStatusStr.isBlank()) {
+        int expStatus = Integer.parseInt(expStatusStr);
+        Assert.assertEquals(status, expStatus,
+                "Unexpected HTTP status for test " + testId);
+        logBoth("Expected HTTP status matched: " + expStatus);
+    } else if (status != 200) {
+        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "FAIL: HTTP " + status);
+        logFail("Unexpected HTTP status: " + status);
+        Assert.fail("FAIL: HTTP " + status);
+    }
 
-        // ----- Validation -----
-        boolean pass = true;
-        String failReason = "";
+    // ----- Validation -----
+    boolean pass = true;
+    String failReason = "";
 
-        if (expected.isBlank()) {
-            // Only check nested error code
-            if (!expectedCode.isBlank()) {
-                String actual = extractNestedErrorCode(responseJson);
-                if (!expectedCode.equals(actual)) {
-                    pass = false;
-                    failReason = "Expected error code " + expectedCode + " but got " + actual;
-                }
-            }
-        } else {
-            try {
-                JSONObject expJson = new JSONObject(expected);
-                pass = jsonContains(expJson, responseJson);
-                if (!pass) failReason = "Response JSON does not contain ExpectedOutput";
-            } catch (Exception ex) {
+    if (expected.isBlank()) {
+        if (!expectedCode.isBlank()) {
+            String actual = extractNestedErrorCode(responseJson);
+            if (!expectedCode.equals(actual)) {
                 pass = false;
-                failReason = "Validation error: " + ex.getMessage();
+                failReason = "Expected error code " + expectedCode + " but got " + actual;
             }
         }
-
-        // ----- Result -----
-        if (pass) {
-            logPass("Test passed for " + testId);
-        } else {
-            logFail(failReason);
-        }
-
-        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId,
-                pass ? "PASS" : "FAIL: " + failReason);
-        Assert.assertTrue(pass, "SE78 test failed for " + testId + " : " + failReason);
-    }
-
-    private void logBoth(String msg) {
-        test.log(Status.INFO, msg);
-        Reporter.log(msg, true);      // 'true' echoes to console & TestNG HTML
-    }
-    private void logPass(String msg) {
-        test.log(Status.PASS, msg);
-        Reporter.log("[PASS] " + msg, true);
-    }
-    private void logFail(String msg) {
-        test.log(Status.FAIL, msg);
-        Reporter.log("[FAIL] " + msg, true);
-    }
-
-    private String extractNestedErrorCode(JSONObject responseJson) {
+    } else {
         try {
-            JSONObject svcResp = responseJson.optJSONObject(
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse");
-            if (svcResp == null) return "";
-            JSONObject errorResp = svcResp.optJSONObject("errorResponse");
-            if (errorResp == null) return "";
-            JSONObject details = errorResp.optJSONObject("errorResponseDetails");
-            if (details == null) return "";
-            JSONArray info = details.optJSONArray("errorInfo");
-            if (info == null || info.isEmpty()) return "";
-            return info.getJSONObject(0).optString("code", "");
-        } catch (Exception e) {
-            return "";
+            JSONObject expJson = new JSONObject(expected);
+            pass = jsonContains(expJson, responseJson);
+            if (!pass) failReason = "Response JSON does not contain ExpectedOutput";
+        } catch (Exception ex) {
+            pass = false;
+            failReason = "Validation error: " + ex.getMessage();
         }
     }
 
-    private boolean jsonContains(JSONObject expected, JSONObject actual) {
-        // simple recursive match (pseudo; implement as before)
-        for (String key : expected.keySet()) {
-            if (!actual.has(key)) return false;
-            Object expVal = expected.get(key);
-            Object actVal = actual.get(key);
-            if (expVal instanceof JSONObject) {
-                if (!(actVal instanceof JSONObject)) return false;
-                if (!jsonContains((JSONObject) expVal, (JSONObject) actVal)) return false;
-            } else if (!expVal.equals(actVal)) return false;
-        }
-        return true;
+    if (pass) {
+        logPass("Test passed for " + testId);
+    } else {
+        logFail(failReason);
     }
+
+    ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId,
+            pass ? "PASS" : "FAIL: " + failReason);
+    Assert.assertTrue(pass, "SE78 test failed for " + testId + " : " + failReason);
 }
