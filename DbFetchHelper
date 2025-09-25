@@ -5,64 +5,36 @@ import java.util.*;
 
 public class DbFetchHelper {
 
-    private static final String CUSTOMER_PROD_QUERY =
-        "SELECT CUST_NO, PROD_ID, PROD_COD " +
-        "FROM INTST02.CUD_PROD_RELN " +
-        "WHERE CUST_NO = ? " +
-        "  AND LENGTH(RTRIM(PROD_ID)) = 14 " +
-        "  AND OPEN_CLO_STA = 'O'";
+    /**
+     * Fetches CHG_ID and OPEN_CLO_STA from DB for a given ChargeID.
+     * Returns a set of strings in the format: CHG_ID|OPEN_CLO_STA
+     */
+    public static Set<String> fetchChargeStatus(String chargeId) throws Exception {
+        String query =
+            "SELECT A.CHG_ID, B.OPEN_CLO_STA " +
+            "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
+            "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID=?";
 
-    
-    private static final String CHARGE_JOIN_QUERY =
-        "SELECT A.CHG_ID, B.CUST_NO, B.OPEN_CLO_STA " +
-        "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
-        "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID=?";
-
-    
-    public static Set<String> fetchCustomerProducts(String customerNumber) throws Exception {
-        List<Map<String,Object>> rows = DBUtils.executeQuery(CUSTOMER_PROD_QUERY, customerNumber);
+        List<Map<String, Object>> rows = DBUtils.executeQuery(query, chargeId);
         Set<String> result = new HashSet<>();
 
-        for (Map<String,Object> row : rows) {
-            Map<String,Object> normalized = new HashMap<>();
-            for (Map.Entry<String,Object> e : row.entrySet()) {
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> normalized = new HashMap<>();
+            for (Map.Entry<String, Object> e : row.entrySet()) {
                 normalized.put(e.getKey().toUpperCase(), e.getValue());
             }
-            String cust   = String.valueOf(normalized.get("CUST_NO")).trim();
-            String prodId = String.valueOf(normalized.get("PROD_ID")).trim();
-            String prodCd = String.valueOf(normalized.get("PROD_COD")).trim();
-            result.add(cust + "|" + prodId + "|" + prodCd);
-        }
-        return result;
-}
-
-    public static Set<String> fetchChargeJoinData(String chargeId) throws Exception {
-        List<Map<String,Object>> rows = DBUtils.executeQuery(CHARGE_JOIN_QUERY, chargeId);
-        Set<String> result = new HashSet<>();
-
-        for (Map<String,Object> row : rows) {
-            Map<String,Object> normalized = new HashMap<>();
-            for (Map.Entry<String,Object> e : row.entrySet()) {
-                normalized.put(e.getKey().toUpperCase(), e.getValue());
-            }
-            String chgId  = String.valueOf(normalized.get("CHG_ID")).trim();
-            String custNo = String.valueOf(normalized.get("CUST_NO")).trim();
+            String chgId   = String.valueOf(normalized.get("CHG_ID")).trim();
             String openSta = String.valueOf(normalized.get("OPEN_CLO_STA")).trim();
-            result.add(chgId + "|" + custNo + "|" + openSta);
+            result.add(chgId + "|" + openSta);
         }
+
         return result;
     }
 
+    // Optional: main for quick testing
     public static void main(String[] args) throws Exception {
-        // Example usage
-        String customerNo = args.length > 0 ? args[0] : "1104165104";
-        Set<String> prodRecords = fetchCustomerProducts(customerNo);
-        System.out.println("Customer Products:");
-        prodRecords.forEach(System.out::println);
-
-        // Call the new query
-        Set<String> chargeRecords = fetchChargeJoinData(SC0000000116);
-        System.out.println("\nCharge Join Records:");
-        chargeRecords.forEach(System.out::println);
+        String chargeId = "SC0000000043"; // test value
+        Set<String> chargeData = fetchChargeStatus(chargeId);
+        chargeData.forEach(System.out::println);
     }
 }
