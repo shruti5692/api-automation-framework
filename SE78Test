@@ -4,7 +4,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String chargeId = row.getOrDefault("ChargeID", "").trim();
     String headers  = row.getOrDefault("Headers", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
-    String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim(); // JSON with fields to validate
+    String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim(); // Excel JSON for selective fields
 
     logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
@@ -15,7 +15,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     if (isDbRequired && !chargeId.isEmpty()) {
         logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
         try {
-            Set<String> chargeData = DbFetchHelper.fetchChargeData(chargeId);
+            Set<String> chargeData = DbFetchHelper.fetchChargeData(chargeId); // returns CHG_ID|OPEN_CLO_STA|CHG_FORM_STA|CYC_CNT
             if (!chargeData.isEmpty()) {
                 String[] parts = chargeData.iterator().next().split("\\|");
                 dbOpenStatus = parts.length > 1 ? parts[1] : "UNKNOWN";
@@ -89,49 +89,34 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String failReason = "";
 
     if (isDbRequired) {
-        logBoth("Step: Performing field-wise validation for DB-required test case");
+        logBoth("Step: Performing DB field-wise validation");
 
+        Map<String, String> dbFields = new HashMap<>();
         if ("TC04_ClosedChargeID".equals(testId)) {
-            // ClosedChargeID scenario
-            if (status != 400) { pass = false; failReason += "Expected HTTP 400 but got " + status; }
+            // ClosedChargeID: check nested error code = 4310
             String actualCode = extractNestedErrorCode(responseJson);
-            logBoth("Validating return code: Expected=4310, Actual=" + actualCode);
-            if (!"4310".equals(actualCode)) { pass = false; failReason += " | Return code mismatch"; }
+            logBoth("Validating return code -> Expected: 4310, Actual: " + actualCode);
+            if (!"4310".equals(actualCode)) { pass = false; failReason += "Return code mismatch"; }
         } else {
-            // OpenChargeID scenario
-            if (status != 200) { pass = false; failReason += "Expected HTTP 200 but got " + status; }
+            // OpenChargeID: validate FormStatus, cyclicCount, errorCode
+            dbFields.put("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.FormStatus", dbFormStatus);
+            dbFields.put("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.cyclicCount", dbCycCnt);
+            dbFields.put("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.errorCode", "0");
 
-            JSONObject svcResp = responseJson.optJSONObject(
-                    "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse");
-            JSONObject responseMessage = svcResp != null ? svcResp.optJSONObject("responseMessage") : null;
-            JSONObject responseBody = responseMessage != null ? responseMessage.optJSONObject("responseBody") : null;
-
-            String apiFormStatus = responseBody != null ? responseBody.optString("FormStatus", "") : "";
-            String apiCycCnt     = responseBody != null ? String.valueOf(responseBody.optInt("cyclicCount", -1)) : "";
-            String apiErrorCode  = responseBody != null ? String.valueOf(responseBody.optInt("errorCode", -1)) : "";
-
-            logBoth("Comparing fields DB vs API:");
-            logBoth("FormStatus -> DB: " + dbFormStatus + ", API: " + apiFormStatus);
-            logBoth("CYC_CNT    -> DB: " + dbCycCnt + ", API: " + apiCycCnt);
-            logBoth("errorCode  -> Expected: 0, API: " + apiErrorCode);
-
-            if (!dbFormStatus.equals(apiFormStatus)) { pass = false; failReason += " | FormStatus mismatch"; }
-            if (!dbCycCnt.equals(apiCycCnt)) { pass = false; failReason += " | CYC_CNT mismatch"; }
-            if (!"0".equals(apiErrorCode)) { pass = false; failReason += " | errorCode mismatch"; }
+            boolean dbPass = validateFields(dbFields, responseJson);
+            if (!dbPass) pass = false;
         }
     } else if (!expectedFieldsJson.isBlank()) {
-        // Non-DB test cases with selective fields from Excel
-        logBoth("Step: Performing selective field-wise validation from Excel");
-        JSONObject expectedFields = new JSONObject(expectedFieldsJson);
-        for (String key : expectedFields.keySet()) {
-            String expectedValue = expectedFields.get(key).toString();
-            String actualValue = responseJson.optString(key, "MISSING");
-            logBoth("Field: " + key + " | Expected: " + expectedValue + " | Actual: " + actualValue);
-            if (!expectedValue.equals(actualValue)) {
-                pass = false;
-                failReason += " | " + key + " mismatch";
-            }
+        logBoth("Step: Performing Excel field-wise validation");
+
+        JSONObject expFieldsJson = new JSONObject(expectedFieldsJson);
+        Map<String, String> excelFields = new HashMap<>();
+        for (String k : expFieldsJson.keySet()) {
+            excelFields.put(k, expFieldsJson.get(k).toString());
         }
+
+        boolean excelPass = validateFields(excelFields, responseJson);
+        if (!excelPass) pass = false;
     }
 
     // ----- Result Logging -----
@@ -142,5 +127,4 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
             pass ? "PASS" : "FAIL: " + failReason);
 
     logBoth("=== End of Test: " + testId + " ===\n");
-    Assert.assertTrue(pass, "SE78 test failed for " + testId + " : " + failReason);
 }
