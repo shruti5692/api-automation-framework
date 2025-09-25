@@ -4,7 +4,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String chargeId     = row.getOrDefault("ChargeID", "").trim();
     String headers      = row.getOrDefault("Headers", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
-    String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim(); // Optional JSON from Excel
+    String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim();
 
     logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
@@ -15,7 +15,6 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     if (isDbRequired && !chargeId.isEmpty()) {
         logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
         try {
-            // fetch only necessary fields: CHG_ID|OPEN_CLO_STA|CHG_FORM_STA|CYC_CNT
             Set<String> chargeData = DbFetchHelper.fetchChargeData(chargeId);
             if (!chargeData.isEmpty()) {
                 String[] parts = chargeData.iterator().next().split("\\|");
@@ -91,28 +90,28 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     if (isDbRequired) {
         logBoth("Step: Performing DB field-wise validation");
         if ("TC04_ClosedChargeID".equals(testId)) {
-            // Closed ChargeID: check nested error code
-            String actualCode = getNestedValue(responseJson,
-                    "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse.errorResponseDetails.errorInfo[0].code");
-            logBoth("Validating return code -> Expected: 4310 | Actual: " + actualCode);
-            if (!"4310".equals(actualCode)) { pass = false; failReason += "Return code mismatch"; }
-        } else {
-            // Open ChargeID: validate FormStatus, cyclicCount, errorCode=0
-            Map<String, String> dbFields = Map.of(
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.FormStatus", dbFormStatus,
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.cyclicCount", dbCycCnt,
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.errorCode", "0"
+            Map<String, String> closedFields = Map.of(
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse.errorResponseDetails.errorInfo[0].code",
+                "4310"
             );
-            boolean dbPass = validateFields(dbFields, responseJson);
-            if (!dbPass) pass = false;
+            if (!validateFields(closedFields, responseJson)) pass = false;
+        } else { // OpenChargeID
+            Map<String, String> openFields = Map.of(
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.FormStatus",
+                dbFormStatus,
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.cyclicCount",
+                dbCycCnt,
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.errorCode",
+                "0"
+            );
+            if (!validateFields(openFields, responseJson)) pass = false;
         }
     } else if (!expectedFieldsJson.isBlank()) {
         logBoth("Step: Performing Excel field-wise validation");
-        JSONObject expFieldsJson = new JSONObject(expectedFieldsJson);
+        JSONObject expJson = new JSONObject(expectedFieldsJson);
         Map<String, String> excelFields = new HashMap<>();
-        for (String k : expFieldsJson.keySet()) excelFields.put(k, expFieldsJson.get(k).toString());
-        boolean excelPass = validateFields(excelFields, responseJson);
-        if (!excelPass) pass = false;
+        for (String k : expJson.keySet()) excelFields.put(k, expJson.get(k).toString());
+        if (!validateFields(excelFields, responseJson)) pass = false;
     }
 
     // ----- Test Result -----
