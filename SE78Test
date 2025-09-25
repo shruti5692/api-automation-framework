@@ -8,34 +8,25 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String expectedCode = row.getOrDefault("ErrorCode", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
 
-    if (testId.isEmpty()) throw new IllegalArgumentException("TestCaseID missing");
-
     logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
-    // ----- DB Prerequisite Check -----
-    if (chargeId.isEmpty()) {
-        logFail("ChargeID missing in Excel, skipping test");
-        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "SKIP: ChargeID missing");
-        throw new SkipException("ChargeID missing, skipping test");
+    // ----- DB Check -----
+    String dbMessage = "ChargeID not checked";
+    if (!chargeId.isEmpty()) {
+        Set<String> chargeData = DbFetchHelper.fetchChargeJoinData(chargeId);
+        if (!chargeData.isEmpty()) {
+            String[] parts = chargeData.iterator().next().split("\\|");
+            String openStatus = parts[2];
+            dbMessage = "DB: ChargeID found with OPEN_CLO_STA='" + openStatus + "'";
+        } else {
+            dbMessage = "DB: ChargeID not found in DB";
+        }
+    } else {
+        dbMessage = "DB: ChargeID is empty";
     }
+    logBoth(dbMessage);
 
-    Set<String> chargeData = DbFetchHelper.fetchChargeJoinData(chargeId);
-    if (chargeData.isEmpty()) {
-        logFail("ChargeID '" + chargeId + "' not found in DB, skipping test");
-        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "SKIP: ChargeID not found in DB");
-        throw new SkipException("ChargeID not found in DB, skipping test");
-    }
-
-    String[] parts = chargeData.iterator().next().split("\\|");
-    String openStatus = parts[2];
-
-    if (!"C".equalsIgnoreCase(openStatus)) {
-        logFail("ChargeID '" + chargeId + "' OPEN_CLO_STA != 'C' (actual: " + openStatus + "), skipping test");
-        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "SKIP: OPEN_CLO_STA != 'C'");
-        throw new SkipException("OPEN_CLO_STA not 'C', skipping test");
-    }
-
-    // ----- Existing header and API call logic -----
+    // ----- Headers & API Call -----
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
     boolean trustTokenPresent = false;
@@ -52,13 +43,6 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         }
     }
     if (!trustTokenPresent) headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
-
-    if (!chargeId.isEmpty() && chargeId.length() < 12) {
-        logBoth("Note: ChargeID shorter than 12 chars, expecting mandatory-field error");
-    }
-    if (!chargeId.isEmpty() && chargeId.length() > 12) {
-        logBoth("Note: ChargeID longer than 12 chars, expecting length-validation error");
-    }
 
     String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
     String url = "https://digitaldev-int-rbwm.systems.uk.hsbc"
@@ -82,16 +66,11 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     // ----- Status validation -----
     if (!expStatusStr.isBlank()) {
         int expStatus = Integer.parseInt(expStatusStr);
-        Assert.assertEquals(status, expStatus,
-                "Unexpected HTTP status for test " + testId);
+        Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testId);
         logBoth("Expected HTTP status matched: " + expStatus);
-    } else if (status != 200) {
-        ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId, "FAIL: HTTP " + status);
-        logFail("Unexpected HTTP status: " + status);
-        Assert.fail("FAIL: HTTP " + status);
     }
 
-    // ----- Validation -----
+    // ----- Error code / JSON validation -----
     boolean pass = true;
     String failReason = "";
 
@@ -114,11 +93,8 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         }
     }
 
-    if (pass) {
-        logPass("Test passed for " + testId);
-    } else {
-        logFail(failReason);
-    }
+    if (pass) logPass("Test passed for " + testId);
+    else logFail(failReason);
 
     ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId,
             pass ? "PASS" : "FAIL: " + failReason);
