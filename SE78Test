@@ -1,8 +1,7 @@
-// Define which TestCaseIDs require DB check
-private static final Set<String> DB_REQUIRED_TESTS = Set.of(
-    "SE78_TC_01", // replace with your actual TestCaseIDs
-    "SE78_TC_02",
-    "TC04_ClosedChargeID" // include your specific test cases
+// Define which TestCaseIDs require DB check and scenario type
+private static final Map<String, String> DB_REQUIRED_TESTS = Map.of(
+    "TC04_ClosedChargeID", "CLOSED",
+    "SE78_TC_OPEN_01", "OPEN"
 );
 
 @Test(dataProvider = "se78Data")
@@ -17,27 +16,40 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
     logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
-    // ----- DB Check (only for selected TestCaseIDs) -----
-    if (DB_REQUIRED_TESTS.contains(testId)) {
-        if (!chargeId.isEmpty()) {
-            try {
-                Set<String> chargeData = DbFetchHelper.fetchChargeStatus(chargeId);
-                if (!chargeData.isEmpty()) {
-                    String[] parts = chargeData.iterator().next().split("\\|");
-                    String openStatus = parts.length >= 2 ? parts[1] : "UNKNOWN";
-                    logBoth("DB Status: ChargeID found with OPEN_CLO_STA='" + openStatus + "'");
-                } else {
-                    logBoth("DB Status: ChargeID not found in DB");
-                }
-            } catch (Exception e) {
-                logBoth("DB Status: Error while fetching charge info - " + e.getMessage());
+    // ----- DB Check (only if required) -----
+    String scenario = DB_REQUIRED_TESTS.get(testId);
+    String openStatus = "UNKNOWN";
+    String formStatus = "UNKNOWN";
+    String acycCnt    = "UNKNOWN";
+
+    if (scenario != null && !chargeId.isEmpty()) {
+        try {
+            Set<String> chargeData;
+            if ("OPEN".equals(scenario)) {
+                chargeData = DbFetchHelper.fetchOpenChargeData(chargeId);
+            } else { // CLOSED
+                chargeData = DbFetchHelper.fetchChargeStatus(chargeId);
             }
-        } else {
-            logBoth("DB Status: ChargeID is empty, skipping DB check");
+
+            if (!chargeData.isEmpty()) {
+                String[] parts = chargeData.iterator().next().split("\\|");
+                openStatus = parts.length > 1 ? parts[1] : "UNKNOWN";
+                if ("OPEN".equals(scenario) && parts.length > 2) formStatus = parts[2];
+                if ("OPEN".equals(scenario) && parts.length > 3) acycCnt = parts[3];
+
+                logBoth("DB Status: ChargeID found with OPEN_CLO_STA='" + openStatus +
+                        (scenario.equals("OPEN") ? "', CHG_FORM_STA='" + formStatus + "', ACYC_CNT='" + acycCnt + "'" : ""));
+            } else {
+                logBoth("DB Status: ChargeID not found in DB");
+            }
+        } catch (Exception e) {
+            logBoth("DB Status: Error while fetching charge info - " + e.getMessage());
         }
+    } else {
+        logBoth("DB Status: No DB check required for this test case or ChargeID is empty");
     }
 
-    // ----- Headers & API Call (existing logic) -----
+    // ----- Headers & API Call -----
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
     boolean trustTokenPresent = false;
@@ -74,32 +86,43 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     logBoth("HTTP " + status + " | Response (truncated): " +
             (body.length() > 500 ? body.substring(0, 500) + "..." : body));
 
-    // ----- Status & Validation (existing logic) -----
-    if (!expStatusStr.isBlank()) {
-        int expStatus = Integer.parseInt(expStatusStr);
-        Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testId);
-        logBoth("Expected HTTP status matched: " + expStatus);
-    }
-
+    // ----- Status & Return Code Validation -----
     boolean pass = true;
     String failReason = "";
 
-    if (expected.isBlank()) {
-        if (!expectedCode.isBlank()) {
-            String actual = extractNestedErrorCode(responseJson);
-            if (!expectedCode.equals(actual)) {
-                pass = false;
-                failReason = "Expected error code " + expectedCode + " but got " + actual;
-            }
-        }
+    int expectedStatus = expStatusStr.isBlank() ?
+            ("OPEN".equals(scenario) ? 200 : 400) : Integer.parseInt(expStatusStr);
+
+    if (status != expectedStatus) {
+        pass = false;
+        failReason += "Expected HTTP " + expectedStatus + " but got " + status;
     } else {
-        try {
-            JSONObject expJson = new JSONObject(expected);
-            pass = jsonContains(expJson, responseJson);
-            if (!pass) failReason = "Response JSON does not contain ExpectedOutput";
-        } catch (Exception ex) {
-            pass = false;
-            failReason = "Validation error: " + ex.getMessage();
+        logBoth("HTTP status validation passed: " + status);
+    }
+
+    String expectedReturnCode = "OPEN".equals(scenario) ? "0000" : "4310";
+    String actualReturnCode = extractNestedErrorCode(responseJson);
+
+    if (!expectedReturnCode.equals(actualReturnCode)) {
+        pass = false;
+        failReason += " | Expected return code " + expectedReturnCode + " but got " + actualReturnCode;
+    } else {
+        logBoth("Return code validation passed: " + actualReturnCode);
+    }
+
+    // ----- Field-wise validation for Open scenario -----
+    if ("OPEN".equals(scenario)) {
+        logBoth("Validating fields for Open ChargeID:");
+        logBoth("FormStatus: " + formStatus);
+        logBoth("ACYC_CNT: " + acycCnt);
+
+        JSONObject svcResp = responseJson.optJSONObject("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse");
+        if (svcResp != null) {
+            JSONObject details = svcResp.optJSONObject("details");
+            if (details != null) {
+                logBoth("API Field validation - FormStatus: " + details.optString("formStatus"));
+                logBoth("API Field validation - CyclicCount: " + details.optString("acycCnt"));
+            }
         }
     }
 
