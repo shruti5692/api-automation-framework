@@ -17,3 +17,8 @@
   "X-HSBC-User-Id": "43998226",
   "X-HSBC-Locale": "1"
 }
+{
+  "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse.errorResponseDetails.errorInfo[0].applicationId": "SECN7801",
+  "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse.errorResponseDetails.errorInfo[0].correlationId": "123498",
+  "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse.errorResponseDetails.errorInfo[0].sourceDetails.eimId": "240675"
+}
