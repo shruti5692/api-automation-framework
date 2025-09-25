@@ -1,21 +1,22 @@
 @Test(dataProvider = "se78Data")
 public void callSecurityChargeApi(Map<String, String> row) throws Exception {
-    String testId   = row.getOrDefault("TestCaseID", "").trim();
-    String chargeId = row.getOrDefault("ChargeID", "").trim();
-    String headers  = row.getOrDefault("Headers", "").trim();
+    String testId       = row.getOrDefault("TestCaseID", "").trim();
+    String chargeId     = row.getOrDefault("ChargeID", "").trim();
+    String headers      = row.getOrDefault("Headers", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
-    String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim(); // Optional Excel JSON
+    String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim(); // Optional JSON from Excel
 
     logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
-    // ----- DB fetch for selected test cases -----
+    // ----- DB Fetch (if required) -----
     String dbOpenStatus = "UNKNOWN", dbFormStatus = "", dbCycCnt = "";
     boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
 
     if (isDbRequired && !chargeId.isEmpty()) {
         logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
         try {
-            Set<String> chargeData = DbFetchHelper.fetchChargeData(chargeId); // returns CHG_ID|OPEN_CLO_STA|CHG_FORM_STA|CYC_CNT
+            // fetch only necessary fields: CHG_ID|OPEN_CLO_STA|CHG_FORM_STA|CYC_CNT
+            Set<String> chargeData = DbFetchHelper.fetchChargeData(chargeId);
             if (!chargeData.isEmpty()) {
                 String[] parts = chargeData.iterator().next().split("\\|");
                 dbOpenStatus = parts.length > 1 ? parts[1] : "UNKNOWN";
@@ -23,13 +24,17 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
                 dbCycCnt     = parts.length > 3 ? parts[3] : "";
                 logBoth("DB Result: OPEN_CLO_STA='" + dbOpenStatus +
                         "', FormStatus='" + dbFormStatus + "', CYC_CNT='" + dbCycCnt + "'");
-            } else logBoth("[WARN] ChargeID not found in DB");
+            } else {
+                logBoth("[WARN] ChargeID not found in DB");
+            }
         } catch (Exception e) {
             logBoth("[ERROR] Exception while fetching DB data: " + e.getMessage());
         }
-    } else logBoth("DB fetch skipped for this test case");
+    } else {
+        logBoth("DB fetch skipped for this test case");
+    }
 
-    // ----- Headers & API Call -----
+    // ----- Prepare Headers & JWT -----
     logBoth("Step: Preparing HTTP headers for API call");
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
@@ -39,10 +44,10 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         for (Iterator<String> it = headerObj.keys(); it.hasNext();) {
             String k = it.next();
             String v = headerObj.optString(k, "");
-            if (v != null && v.contains("{TRUST_TOKEN}")) v = v.replace("{TRUST_TOKEN}", jwt);
+            if (v.contains("{TRUST_TOKEN}")) v = v.replace("{TRUST_TOKEN}", jwt);
             if (k.equalsIgnoreCase("X-HSBC-E2E-Trust-Token") || k.equalsIgnoreCase("X-HSBC-TRUST-TOKEN"))
                 trustTokenPresent = true;
-            headerBuilder.add(k, v == null ? "" : v);
+            headerBuilder.add(k, v);
             logBoth("Header added: " + k + "=" + v);
         }
     }
@@ -51,6 +56,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         logBoth("Header added: X-HSBC-E2E-Trust-Token=" + jwt);
     }
 
+    // ----- API Call -----
     String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
     String url = "https://digitaldev-int-rbwm.systems.uk.hsbc"
                + "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy"
@@ -85,12 +91,13 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     if (isDbRequired) {
         logBoth("Step: Performing DB field-wise validation");
         if ("TC04_ClosedChargeID".equals(testId)) {
-            // ClosedChargeID: validate nested error code
+            // Closed ChargeID: check nested error code
             String actualCode = getNestedValue(responseJson,
                     "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse.errorResponseDetails.errorInfo[0].code");
-            logBoth("Validating return code -> Expected: 4310, Actual: " + actualCode);
+            logBoth("Validating return code -> Expected: 4310 | Actual: " + actualCode);
             if (!"4310".equals(actualCode)) { pass = false; failReason += "Return code mismatch"; }
         } else {
+            // Open ChargeID: validate FormStatus, cyclicCount, errorCode=0
             Map<String, String> dbFields = Map.of(
                 "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.FormStatus", dbFormStatus,
                 "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.cyclicCount", dbCycCnt,
