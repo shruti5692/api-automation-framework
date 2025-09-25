@@ -1,26 +1,71 @@
+/**
+ * Safely fetches a nested value from a JSONObject, handling arrays with [index].
+ * Returns "MISSING" if path does not exist.
+ *
+ * @param json JSONObject to traverse
+ * @param path Dot-separated path with optional array indices, e.g.
+ *             "parent.childArray[0].fieldName"
+ */
 private String getNestedValue(Object json, String path) {
     String[] parts = path.split("\\.");
     Object current = json;
 
     for (String part : parts) {
         if (part.contains("[") && part.contains("]")) {
+            // Array access: key[index]
             String key = part.substring(0, part.indexOf("["));
             int index = Integer.parseInt(part.substring(part.indexOf("[") + 1, part.indexOf("]")));
 
             if (current instanceof JSONObject) {
                 JSONArray arr = ((JSONObject) current).optJSONArray(key);
-                if (arr != null && arr.length() > index) current = arr.get(index);
-                else return "MISSING";
+                if (arr != null && arr.length() > index) {
+                    current = arr.get(index);
+                } else {
+                    return "MISSING";
+                }
             } else {
                 return "MISSING";
             }
         } else {
+            // Normal object key
             if (current instanceof JSONObject) {
-                if (((JSONObject) current).has(part)) current = ((JSONObject) current).get(part);
-                else return "MISSING";
-            } else return "MISSING";
+                if (((JSONObject) current).has(part)) {
+                    current = ((JSONObject) current).get(part);
+                } else {
+                    return "MISSING";
+                }
+            } else {
+                return "MISSING";
+            }
         }
     }
 
     return current == null ? "MISSING" : String.valueOf(current).trim();
+}
+/**
+ * Validates multiple fields from response JSON against expected values.
+ * Logs each field validation to Extent & console.
+ *
+ * @param expectedFields Map<JSONPath, ExpectedValue>
+ * @param responseJson JSONObject from API response
+ * @return true if all fields match, false otherwise
+ */
+private boolean validateFields(Map<String, String> expectedFields, JSONObject responseJson) {
+    boolean allPass = true;
+
+    for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
+        String path = entry.getKey();
+        String expected = entry.getValue();
+        String actual = getNestedValue(responseJson, path);
+
+        boolean fieldPass = expected.equals(actual);
+        allPass &= fieldPass;
+
+        logBoth("Field validation -> " + path +
+                " | Expected: " + expected +
+                " | Actual: " + actual +
+                " | Result: " + (fieldPass ? "PASS" : "FAIL"));
+    }
+
+    return allPass;
 }
