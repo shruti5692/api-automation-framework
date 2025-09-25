@@ -1,0 +1,9 @@
+private String getNestedValue(JSONObject json, String path) {
+    String[] keys = path.split("\\.");
+    JSONObject current = json;
+    for (int i = 0; i < keys.length - 1; i++) {
+        if (current.has(keys[i])) current = current.optJSONObject(keys[i]);
+        else return "MISSING";
+    }
+    return current.optString(keys[keys.length - 1], "MISSING");
+}
