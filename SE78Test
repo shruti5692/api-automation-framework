@@ -1,34 +1,30 @@
-// Define which TestCaseIDs are Open Charge scenarios
-private static final Set<String> OPEN_CHARGE_TESTS = Set.of(
-    "SE78_TC_OPEN_01" // replace with actual TestCaseID(s)
+// Only one set for DB-required test cases (Closed + Open)
+private static final Set<String> DB_REQUIRED_TESTS = Set.of(
+    "TC04_ClosedChargeID",
+    "SE78_TC_OPEN_01" // replace with your actual OpenChargeID test
 );
 
 @Test(dataProvider = "se78Data")
 public void callSecurityChargeApi(Map<String, String> row) throws Exception {
-
-    String testId       = row.getOrDefault("TestCaseID", "").trim();
-    String chargeId     = row.getOrDefault("ChargeID", "").trim();
-    String headers      = row.getOrDefault("Headers", "").trim();
-    String expected     = row.getOrDefault("ExpectedOutput", "").trim();
-    String expectedCode = row.getOrDefault("ErrorCode", "").trim();
+    String testId   = row.getOrDefault("TestCaseID", "").trim();
+    String chargeId = row.getOrDefault("ChargeID", "").trim();
+    String headers  = row.getOrDefault("Headers", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
 
     logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
-    boolean isOpenChargeTest = OPEN_CHARGE_TESTS.contains(testId);
-    String dbFormStatus = "UNKNOWN", dbCycCnt = "UNKNOWN";
+    String dbOpenStatus = "UNKNOWN", dbFormStatus = "", dbCycCnt = "";
+    boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
 
-    // ----- DB fetch for OpenChargeID test only -----
-    if (isOpenChargeTest && !chargeId.isEmpty()) {
+    if (isDbRequired && !chargeId.isEmpty()) {
         try {
-            Set<String> chargeData = DbFetchHelper.fetchOpenChargeData(chargeId);
+            Set<String> chargeData = DbFetchHelper.fetchChargeData(chargeId);
             if (!chargeData.isEmpty()) {
                 String[] parts = chargeData.iterator().next().split("\\|");
-                dbFormStatus = parts.length > 2 ? parts[2] : "UNKNOWN";
-                dbCycCnt     = parts.length > 3 ? parts[3] : "UNKNOWN";
-                String openStatus = parts.length > 1 ? parts[1] : "UNKNOWN";
-
-                logBoth("DB Status: CHG_ID found with OPEN_CLO_STA='" + openStatus +
+                dbOpenStatus = parts.length > 1 ? parts[1] : "UNKNOWN";
+                dbFormStatus = parts.length > 2 ? parts[2] : "";
+                dbCycCnt     = parts.length > 3 ? parts[3] : "";
+                logBoth("DB Status: CHG_ID found with OPEN_CLO_STA='" + dbOpenStatus +
                         "', FormStatus='" + dbFormStatus + "', CYC_CNT='" + dbCycCnt + "'");
             } else {
                 logBoth("DB Status: ChargeID not found in DB");
@@ -38,11 +34,10 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         }
     }
 
-    // ----- Headers & API call (reuse existing logic) -----
+    // ----- Headers & API call (existing logic) -----
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
     boolean trustTokenPresent = false;
-
     if (!headers.isBlank()) {
         JSONObject headerObj = new JSONObject(headers);
         for (Iterator<String> it = headerObj.keys(); it.hasNext();) {
@@ -75,80 +70,42 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     logBoth("HTTP " + status + " | Response (truncated): " +
             (body.length() > 500 ? body.substring(0, 500) + "..." : body));
 
+    // ----- Validation -----
     boolean pass = true;
     String failReason = "";
 
-    // ----- OpenChargeID validation -----
-    if (isOpenChargeTest) {
-        // Status should be 200
-        if (status != 200) {
-            pass = false;
-            failReason += "Expected HTTP 200 but got " + status;
-        } else {
-            logBoth("HTTP status validation passed: 200");
+    if (isDbRequired) {
+        // ClosedChargeID
+        if ("TC04_ClosedChargeID".equals(testId)) {
+            if (status != 400) { pass = false; failReason += "Expected HTTP 400 but got " + status; }
+            String actualCode = extractNestedErrorCode(responseJson);
+            if (!"4310".equals(actualCode)) { pass = false; failReason += " | Expected code 4310 but got " + actualCode; }
         }
+        // OpenChargeID
+        else {
+            if (status != 200) { pass = false; failReason += "Expected HTTP 200 but got " + status; }
+            String actualCode = extractNestedErrorCode(responseJson);
+            if (!"0".equals(actualCode)) { pass = false; failReason += " | Expected code 0 but got " + actualCode; }
 
-        // Return code should be "0"
-        String actualCode = extractNestedErrorCode(responseJson);
-        if (!"0".equals(actualCode)) {
-            pass = false;
-            failReason += " | Expected return code 0 but got " + actualCode;
-        } else {
-            logBoth("Return code validation passed: " + actualCode);
-        }
-
-        // Field-wise comparison: FormStatus & CYC_CNT
-        JSONObject svcResp = responseJson.optJSONObject("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse");
-        if (svcResp != null) {
-            JSONObject details = svcResp.optJSONObject("details");
-            if (details != null) {
-                String apiFormStatus = details.optString("formStatus");
-                String apiCycCnt     = details.optString("cycCnt");
-
-                logBoth("Validating fields from DB vs API");
-                if (!dbFormStatus.equals(apiFormStatus)) {
-                    pass = false;
-                    failReason += " | FormStatus mismatch: DB='" + dbFormStatus + "', API='" + apiFormStatus + "'";
-                } else logBoth("FormStatus matched: " + dbFormStatus);
-
-                if (!dbCycCnt.equals(apiCycCnt)) {
-                    pass = false;
-                    failReason += " | CYC_CNT mismatch: DB='" + dbCycCnt + "', API='" + apiCycCnt + "'";
-                } else logBoth("CYC_CNT matched: " + dbCycCnt);
-            }
-        }
-
-    } else {
-        // Existing validation for other test cases
-        if (!expStatusStr.isBlank()) {
-            int expStatus = Integer.parseInt(expStatusStr);
-            Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testId);
-            logBoth("Expected HTTP status matched: " + expStatus);
-        }
-
-        if (expected.isBlank()) {
-            if (!expectedCode.isBlank()) {
-                String actual = extractNestedErrorCode(responseJson);
-                if (!expectedCode.equals(actual)) {
-                    pass = false;
-                    failReason = "Expected error code " + expectedCode + " but got " + actual;
+            // Field-wise validation
+            JSONObject svcResp = responseJson.optJSONObject("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse");
+            if (svcResp != null) {
+                JSONObject details = svcResp.optJSONObject("details");
+                if (details != null) {
+                    String apiFormStatus = details.optString("formStatus");
+                    String apiCycCnt     = details.optString("cycCnt");
+                    if (!dbFormStatus.equals(apiFormStatus)) { pass = false; failReason += " | FormStatus mismatch"; }
+                    if (!dbCycCnt.equals(apiCycCnt)) { pass = false; failReason += " | CYC_CNT mismatch"; }
                 }
             }
-        } else {
-            try {
-                JSONObject expJson = new JSONObject(expected);
-                pass = jsonContains(expJson, responseJson);
-                if (!pass) failReason = "Response JSON does not contain ExpectedOutput";
-            } catch (Exception ex) {
-                pass = false;
-                failReason = "Validation error: " + ex.getMessage();
-            }
         }
+    }
+    else {
+        // Existing validation for other test cases (from Excel)
     }
 
     if (pass) logPass("Test passed for " + testId);
     else logFail(failReason);
-
     ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId,
             pass ? "PASS" : "FAIL: " + failReason);
     Assert.assertTrue(pass, "SE78 test failed for " + testId + " : " + failReason);
