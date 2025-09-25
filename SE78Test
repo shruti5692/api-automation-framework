@@ -1,9 +1,3 @@
-// Only one set for DB-required test cases (Closed + Open)
-private static final Set<String> DB_REQUIRED_TESTS = Set.of(
-    "TC04_ClosedChargeID",
-    "SE78_TC_OPEN_01" // replace with your actual OpenChargeID test
-);
-
 @Test(dataProvider = "se78Data")
 public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String testId   = row.getOrDefault("TestCaseID", "").trim();
@@ -16,7 +10,9 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String dbOpenStatus = "UNKNOWN", dbFormStatus = "", dbCycCnt = "";
     boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
 
+    // ----- DB fetch -----
     if (isDbRequired && !chargeId.isEmpty()) {
+        logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
         try {
             Set<String> chargeData = DbFetchHelper.fetchChargeData(chargeId);
             if (!chargeData.isEmpty()) {
@@ -24,17 +20,20 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
                 dbOpenStatus = parts.length > 1 ? parts[1] : "UNKNOWN";
                 dbFormStatus = parts.length > 2 ? parts[2] : "";
                 dbCycCnt     = parts.length > 3 ? parts[3] : "";
-                logBoth("DB Status: CHG_ID found with OPEN_CLO_STA='" + dbOpenStatus +
+                logBoth("DB Result: OPEN_CLO_STA='" + dbOpenStatus + 
                         "', FormStatus='" + dbFormStatus + "', CYC_CNT='" + dbCycCnt + "'");
             } else {
-                logBoth("DB Status: ChargeID not found in DB");
+                logBoth("[WARN] ChargeID not found in DB");
             }
         } catch (Exception e) {
-            logBoth("DB Status: Error while fetching charge info - " + e.getMessage());
+            logBoth("[ERROR] Exception while fetching DB data: " + e.getMessage());
         }
+    } else {
+        logBoth("DB fetch skipped for this test case");
     }
 
-    // ----- Headers & API call (existing logic) -----
+    // ----- Build headers -----
+    logBoth("Step: Preparing HTTP headers for API call");
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
     boolean trustTokenPresent = false;
@@ -47,14 +46,20 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
             if (k.equalsIgnoreCase("X-HSBC-E2E-Trust-Token") || k.equalsIgnoreCase("X-HSBC-TRUST-TOKEN"))
                 trustTokenPresent = true;
             headerBuilder.add(k, v == null ? "" : v);
+            logBoth("Header added: " + k + "=" + v);
         }
     }
-    if (!trustTokenPresent) headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
+    if (!trustTokenPresent) {
+        headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
+        logBoth("Header added: X-HSBC-E2E-Trust-Token=" + jwt);
+    }
 
+    // ----- API Call -----
     String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
     String url = "https://digitaldev-int-rbwm.systems.uk.hsbc"
                + "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy"
                + "/v1/securities/" + safeCharge + "/chargedtl";
+    logBoth("Step: Calling SE78 API with URL: " + url);
 
     int status;
     String body;
@@ -67,46 +72,58 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         responseJson = body.isEmpty() ? new JSONObject() : new JSONObject(body);
     }
 
-    logBoth("HTTP " + status + " | Response (truncated): " +
-            (body.length() > 500 ? body.substring(0, 500) + "..." : body));
+    logBoth("Step: Received API response");
+    logBoth("HTTP Status: " + status);
+    logBoth("Response Body (truncated): " + (body.length() > 500 ? body.substring(0, 500) + "..." : body));
 
     // ----- Validation -----
     boolean pass = true;
     String failReason = "";
 
     if (isDbRequired) {
-        // ClosedChargeID
+        logBoth("Step: Performing field-wise validation for DB-required test case");
         if ("TC04_ClosedChargeID".equals(testId)) {
+            logBoth("Validating ClosedChargeID scenario");
             if (status != 400) { pass = false; failReason += "Expected HTTP 400 but got " + status; }
             String actualCode = extractNestedErrorCode(responseJson);
-            if (!"4310".equals(actualCode)) { pass = false; failReason += " | Expected code 4310 but got " + actualCode; }
-        }
-        // OpenChargeID
-        else {
+            logBoth("Comparing return code: Expected=4310, Actual=" + actualCode);
+            if (!"4310".equals(actualCode)) { pass = false; failReason += " | Return code mismatch"; }
+        } else { // OpenChargeID
+            logBoth("Validating OpenChargeID scenario");
             if (status != 200) { pass = false; failReason += "Expected HTTP 200 but got " + status; }
             String actualCode = extractNestedErrorCode(responseJson);
-            if (!"0".equals(actualCode)) { pass = false; failReason += " | Expected code 0 but got " + actualCode; }
+            logBoth("Comparing return code: Expected=0, Actual=" + actualCode);
+            if (!"0".equals(actualCode)) { pass = false; failReason += " | Return code mismatch"; }
 
-            // Field-wise validation
+            // Field-wise comparison
             JSONObject svcResp = responseJson.optJSONObject("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse");
             if (svcResp != null) {
                 JSONObject details = svcResp.optJSONObject("details");
                 if (details != null) {
                     String apiFormStatus = details.optString("formStatus");
                     String apiCycCnt     = details.optString("cycCnt");
+
+                    logBoth("Step: Comparing DB vs API fields");
+                    logBoth("FormStatus -> DB: " + dbFormStatus + ", API: " + apiFormStatus);
+                    logBoth("CYC_CNT    -> DB: " + dbCycCnt + ", API: " + apiCycCnt);
+
                     if (!dbFormStatus.equals(apiFormStatus)) { pass = false; failReason += " | FormStatus mismatch"; }
                     if (!dbCycCnt.equals(apiCycCnt)) { pass = false; failReason += " | CYC_CNT mismatch"; }
                 }
             }
         }
-    }
-    else {
-        // Existing validation for other test cases (from Excel)
+    } else {
+        logBoth("Step: Performing standard Excel-based validation for this test case");
+        // Existing logic for non-DB test cases
     }
 
+    // ----- Result Logging -----
     if (pass) logPass("Test passed for " + testId);
     else logFail(failReason);
+
     ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId,
             pass ? "PASS" : "FAIL: " + failReason);
+
+    logBoth("=== End of Test: " + testId + " ===\n");
     Assert.assertTrue(pass, "SE78 test failed for " + testId + " : " + failReason);
 }
