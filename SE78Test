@@ -1,7 +1,6 @@
-// Define which TestCaseIDs require DB check and scenario type
-private static final Map<String, String> DB_REQUIRED_TESTS = Map.of(
-    "TC04_ClosedChargeID", "CLOSED",
-    "SE78_TC_OPEN_01", "OPEN"
+// Define which TestCaseIDs are Open Charge scenarios
+private static final Set<String> OPEN_CHARGE_TESTS = Set.of(
+    "SE78_TC_OPEN_01" // replace with actual TestCaseID(s)
 );
 
 @Test(dataProvider = "se78Data")
@@ -16,40 +15,30 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
     logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
 
-    // ----- DB Check (only if required) -----
-    String scenario = DB_REQUIRED_TESTS.get(testId);
-    String openStatus = "UNKNOWN";
-    String formStatus = "UNKNOWN";
-    String acycCnt    = "UNKNOWN";
+    boolean isOpenChargeTest = OPEN_CHARGE_TESTS.contains(testId);
+    String dbFormStatus = "UNKNOWN", dbCycCnt = "UNKNOWN";
 
-    if (scenario != null && !chargeId.isEmpty()) {
+    // ----- DB fetch for OpenChargeID test only -----
+    if (isOpenChargeTest && !chargeId.isEmpty()) {
         try {
-            Set<String> chargeData;
-            if ("OPEN".equals(scenario)) {
-                chargeData = DbFetchHelper.fetchOpenChargeData(chargeId);
-            } else { // CLOSED
-                chargeData = DbFetchHelper.fetchChargeStatus(chargeId);
-            }
-
+            Set<String> chargeData = DbFetchHelper.fetchOpenChargeData(chargeId);
             if (!chargeData.isEmpty()) {
                 String[] parts = chargeData.iterator().next().split("\\|");
-                openStatus = parts.length > 1 ? parts[1] : "UNKNOWN";
-                if ("OPEN".equals(scenario) && parts.length > 2) formStatus = parts[2];
-                if ("OPEN".equals(scenario) && parts.length > 3) acycCnt = parts[3];
+                dbFormStatus = parts.length > 2 ? parts[2] : "UNKNOWN";
+                dbCycCnt     = parts.length > 3 ? parts[3] : "UNKNOWN";
+                String openStatus = parts.length > 1 ? parts[1] : "UNKNOWN";
 
-                logBoth("DB Status: ChargeID found with OPEN_CLO_STA='" + openStatus +
-                        (scenario.equals("OPEN") ? "', CHG_FORM_STA='" + formStatus + "', ACYC_CNT='" + acycCnt + "'" : ""));
+                logBoth("DB Status: CHG_ID found with OPEN_CLO_STA='" + openStatus +
+                        "', FormStatus='" + dbFormStatus + "', CYC_CNT='" + dbCycCnt + "'");
             } else {
                 logBoth("DB Status: ChargeID not found in DB");
             }
         } catch (Exception e) {
             logBoth("DB Status: Error while fetching charge info - " + e.getMessage());
         }
-    } else {
-        logBoth("DB Status: No DB check required for this test case or ChargeID is empty");
     }
 
-    // ----- Headers & API Call -----
+    // ----- Headers & API call (reuse existing logic) -----
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
     boolean trustTokenPresent = false;
@@ -86,42 +75,73 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     logBoth("HTTP " + status + " | Response (truncated): " +
             (body.length() > 500 ? body.substring(0, 500) + "..." : body));
 
-    // ----- Status & Return Code Validation -----
     boolean pass = true;
     String failReason = "";
 
-    int expectedStatus = expStatusStr.isBlank() ?
-            ("OPEN".equals(scenario) ? 200 : 400) : Integer.parseInt(expStatusStr);
+    // ----- OpenChargeID validation -----
+    if (isOpenChargeTest) {
+        // Status should be 200
+        if (status != 200) {
+            pass = false;
+            failReason += "Expected HTTP 200 but got " + status;
+        } else {
+            logBoth("HTTP status validation passed: 200");
+        }
 
-    if (status != expectedStatus) {
-        pass = false;
-        failReason += "Expected HTTP " + expectedStatus + " but got " + status;
-    } else {
-        logBoth("HTTP status validation passed: " + status);
-    }
+        // Return code should be "0"
+        String actualCode = extractNestedErrorCode(responseJson);
+        if (!"0".equals(actualCode)) {
+            pass = false;
+            failReason += " | Expected return code 0 but got " + actualCode;
+        } else {
+            logBoth("Return code validation passed: " + actualCode);
+        }
 
-    String expectedReturnCode = "OPEN".equals(scenario) ? "0000" : "4310";
-    String actualReturnCode = extractNestedErrorCode(responseJson);
-
-    if (!expectedReturnCode.equals(actualReturnCode)) {
-        pass = false;
-        failReason += " | Expected return code " + expectedReturnCode + " but got " + actualReturnCode;
-    } else {
-        logBoth("Return code validation passed: " + actualReturnCode);
-    }
-
-    // ----- Field-wise validation for Open scenario -----
-    if ("OPEN".equals(scenario)) {
-        logBoth("Validating fields for Open ChargeID:");
-        logBoth("FormStatus: " + formStatus);
-        logBoth("ACYC_CNT: " + acycCnt);
-
+        // Field-wise comparison: FormStatus & CYC_CNT
         JSONObject svcResp = responseJson.optJSONObject("gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse");
         if (svcResp != null) {
             JSONObject details = svcResp.optJSONObject("details");
             if (details != null) {
-                logBoth("API Field validation - FormStatus: " + details.optString("formStatus"));
-                logBoth("API Field validation - CyclicCount: " + details.optString("acycCnt"));
+                String apiFormStatus = details.optString("formStatus");
+                String apiCycCnt     = details.optString("cycCnt");
+
+                logBoth("Validating fields from DB vs API");
+                if (!dbFormStatus.equals(apiFormStatus)) {
+                    pass = false;
+                    failReason += " | FormStatus mismatch: DB='" + dbFormStatus + "', API='" + apiFormStatus + "'";
+                } else logBoth("FormStatus matched: " + dbFormStatus);
+
+                if (!dbCycCnt.equals(apiCycCnt)) {
+                    pass = false;
+                    failReason += " | CYC_CNT mismatch: DB='" + dbCycCnt + "', API='" + apiCycCnt + "'";
+                } else logBoth("CYC_CNT matched: " + dbCycCnt);
+            }
+        }
+
+    } else {
+        // Existing validation for other test cases
+        if (!expStatusStr.isBlank()) {
+            int expStatus = Integer.parseInt(expStatusStr);
+            Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testId);
+            logBoth("Expected HTTP status matched: " + expStatus);
+        }
+
+        if (expected.isBlank()) {
+            if (!expectedCode.isBlank()) {
+                String actual = extractNestedErrorCode(responseJson);
+                if (!expectedCode.equals(actual)) {
+                    pass = false;
+                    failReason = "Expected error code " + expectedCode + " but got " + actual;
+                }
+            }
+        } else {
+            try {
+                JSONObject expJson = new JSONObject(expected);
+                pass = jsonContains(expJson, responseJson);
+                if (!pass) failReason = "Response JSON does not contain ExpectedOutput";
+            } catch (Exception ex) {
+                pass = false;
+                failReason = "Validation error: " + ex.getMessage();
             }
         }
     }
