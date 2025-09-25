@@ -1,40 +1,24 @@
-package tests;
+public static Set<String> fetchOpenChargeData(String chargeId) throws Exception {
+    String query =
+        "SELECT A.CHG_ID, B.OPEN_CLO_STA, A.CHG_FORM_STA, A.ACYC_CNT " +
+        "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
+        "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID=?";
 
-import org.framework.utils.DBUtils;
-import java.util.*;
+    List<Map<String, Object>> rows = DBUtils.executeQuery(query, chargeId);
+    Set<String> result = new HashSet<>();
 
-public class DbFetchHelper {
-
-    /**
-     * Fetches CHG_ID and OPEN_CLO_STA from DB for a given ChargeID.
-     * Returns a set of strings in the format: CHG_ID|OPEN_CLO_STA
-     */
-    public static Set<String> fetchChargeStatus(String chargeId) throws Exception {
-        String query =
-            "SELECT A.CHG_ID, B.OPEN_CLO_STA " +
-            "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
-            "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID=?";
-
-        List<Map<String, Object>> rows = DBUtils.executeQuery(query, chargeId);
-        Set<String> result = new HashSet<>();
-
-        for (Map<String, Object> row : rows) {
-            Map<String, Object> normalized = new HashMap<>();
-            for (Map.Entry<String, Object> e : row.entrySet()) {
-                normalized.put(e.getKey().toUpperCase(), e.getValue());
-            }
-            String chgId   = String.valueOf(normalized.get("CHG_ID")).trim();
-            String openSta = String.valueOf(normalized.get("OPEN_CLO_STA")).trim();
-            result.add(chgId + "|" + openSta);
+    for (Map<String, Object> row : rows) {
+        Map<String, Object> normalized = new HashMap<>();
+        for (Map.Entry<String, Object> e : row.entrySet()) {
+            normalized.put(e.getKey().toUpperCase(), e.getValue());
         }
+        String chgId      = String.valueOf(normalized.get("CHG_ID")).trim();
+        String openSta    = String.valueOf(normalized.get("OPEN_CLO_STA")).trim();
+        String formStatus = String.valueOf(normalized.get("CHG_FORM_STA")).trim();
+        String acycCnt    = String.valueOf(normalized.get("ACYC_CNT")).trim();
 
-        return result;
+        result.add(chgId + "|" + openSta + "|" + formStatus + "|" + acycCnt);
     }
 
-    // Optional: main for quick testing
-    public static void main(String[] args) throws Exception {
-        String chargeId = "SC0000000043"; // test value
-        Set<String> chargeData = fetchChargeStatus(chargeId);
-        chargeData.forEach(System.out::println);
-    }
+    return result;
 }
