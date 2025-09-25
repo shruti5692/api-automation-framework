@@ -35,6 +35,18 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
             logBoth("DB Status: ChargeID is empty, skipping DB check");
         }
     }
+Set<String> chargeData = DbFetchHelper.fetchChargeJoinData(chargeId);
+if (!chargeData.isEmpty()) {
+    String[] parts = chargeData.iterator().next().split("\\|");
+    if (parts.length >= 3) {
+        String openStatus = parts[2];
+        logBoth("DB Status: ChargeID found with OPEN_CLO_STA='" + openStatus + "'");
+    } else {
+        logBoth("DB Status: ChargeID data incomplete, parts length=" + parts.length);
+    }
+} else {
+    logBoth("DB Status: ChargeID not found in DB");
+}
 
     // ----- Headers & API Call (existing logic) -----
     String jwt = JwtFetcher.fetchIb2bJwt();
