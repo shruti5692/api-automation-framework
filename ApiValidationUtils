@@ -4,69 +4,75 @@ import com.aventstack.extentreports.ExtentTest;
 import com.aventstack.extentreports.Status;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.testng.Reporter;
 
 import java.util.Map;
 
 public class ApiValidationUtils {
 
-    // --------------------------
-    // 1. Generic nested JSON getter
-    // --------------------------
-    public static String getNestedValue(Object json, String path) {
-        String[] parts = path.split("\\.");
-        Object current = json;
+    /**
+     * Fetches value from a nested JSON object using dot-path notation.
+     * Supports arrays using [index], e.g.
+     * "errorResponse.errorResponseDetails.errorInfo[0].code"
+     */
+    public static String getValueFromJson(JSONObject json, String path) {
+        try {
+            String[] parts = path.split("\\.");
+            Object current = json;
 
-        for (String part : parts) {
-            if (part.contains("[") && part.contains("]")) {
-                String key = part.substring(0, part.indexOf("["));
-                int index = Integer.parseInt(part.substring(part.indexOf("[") + 1, part.indexOf("]")));
-                if (current instanceof JSONObject) {
-                    JSONArray arr = ((JSONObject) current).optJSONArray(key);
-                    if (arr != null && arr.length() > index) {
-                        current = arr.get(index);
-                    } else return "MISSING";
-                } else return "MISSING";
-            } else {
-                if (current instanceof JSONObject) {
-                    if (((JSONObject) current).has(part)) {
-                        current = ((JSONObject) current).get(part);
-                    } else return "MISSING";
-                } else return "MISSING";
+            for (String part : parts) {
+                if (part.contains("[")) { // handle arrays
+                    String key = part.substring(0, part.indexOf('['));
+                    int index = Integer.parseInt(part.substring(part.indexOf('[') + 1, part.indexOf(']')));
+                    current = ((JSONObject) current).optJSONObject(key).optJSONArray("").get(index);
+
+                    // If the key directly maps to array
+                    if (current == null) {
+                        JSONArray arr = ((JSONObject) current).optJSONArray(key);
+                        current = (arr != null && arr.length() > index) ? arr.get(index) : null;
+                    }
+                } else {
+                    if (current instanceof JSONObject) {
+                        current = ((JSONObject) current).opt(part);
+                    } else {
+                        return "MISSING";
+                    }
+                }
+
+                if (current == null) return "MISSING";
             }
+
+            return current.toString();
+        } catch (Exception e) {
+            return "MISSING";
         }
-        return current == null ? "MISSING" : String.valueOf(current).trim();
     }
 
-    // --------------------------
-    // 2. Field-wise validation with logs
-    // --------------------------
+    /**
+     * Validates multiple fields from expected map against actual JSON response.
+     * Logs results in ExtentTest and console.
+     */
     public static boolean validateFields(Map<String, String> expectedFields, JSONObject responseJson, ExtentTest test) {
-        boolean allPass = true;
+        boolean pass = true;
 
         for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
             String path = entry.getKey();
             String expected = entry.getValue();
-            String actual = getNestedValue(responseJson, path);
+            String actual = getValueFromJson(responseJson, path);
 
-            boolean fieldPass = expected.equals(actual);
-            allPass &= fieldPass;
+            String result = expected.equals(actual) ? "PASS" : "FAIL";
+            pass = pass && result.equals("PASS");
 
-            logField(test, path, expected, actual, fieldPass);
+            test.log(Status.INFO, String.format(
+                    "Field validation -> %s | Expected: %s | Actual: %s | Result: %s",
+                    path, expected, actual, result
+            ));
+
+            System.out.println(String.format(
+                    "Field validation -> %s | Expected: %s | Actual: %s | Result: %s",
+                    path, expected, actual, result
+            ));
         }
 
-        return allPass;
-    }
-
-    // --------------------------
-    // 3. Logging helper
-    // --------------------------
-    private static void logField(ExtentTest test, String path, String expected, String actual, boolean pass) {
-        String msg = "Field validation -> " + path +
-                     " | Expected: " + expected +
-                     " | Actual: " + actual +
-                     " | Result: " + (pass ? "PASS" : "FAIL");
-        test.log(pass ? Status.PASS : Status.FAIL, msg);
-        Reporter.log(msg, true);
+        return pass;
     }
 }
