@@ -4,18 +4,18 @@ import org.framework.utils.DBUtils;
 import java.util.*;
 
 /**
- * DbFetchHelper - simplified and unified for SE78 tests
- * Supports fetching data for both Closed and Open Charge scenarios.
+ * Single DB fetch method for both Closed and Open ChargeIDs.
  */
 public class DbFetchHelper {
 
     /**
-     * Fetches CHG_ID and OPEN_CLO_STA for Closed Charge scenario.
-     * Returns Set<String> in format: CHG_ID|OPEN_CLO_STA
+     * Fetch CHG_ID, OPEN_CLO_STA, CHG_FORM_STA, CYC_CNT
+     * Returns Set<String> in format: CHG_ID|OPEN_CLO_STA|CHG_FORM_STA|CYC_CNT
+     * For ClosedChargeID, CHG_FORM_STA and CYC_CNT may be empty strings.
      */
-    public static Set<String> fetchChargeStatus(String chargeId) throws Exception {
+    public static Set<String> fetchChargeData(String chargeId) throws Exception {
         String query =
-            "SELECT A.CHG_ID, B.OPEN_CLO_STA " +
+            "SELECT A.CHG_ID, B.OPEN_CLO_STA, A.CHG_FORM_STA, A.CYC_CNT " +
             "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
             "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID=?";
 
@@ -27,49 +27,21 @@ public class DbFetchHelper {
             for (Map.Entry<String, Object> e : row.entrySet()) {
                 normalized.put(e.getKey().toUpperCase(), e.getValue());
             }
-            String chgId   = String.valueOf(normalized.get("CHG_ID")).trim();
-            String openSta = String.valueOf(normalized.get("OPEN_CLO_STA")).trim();
-            result.add(chgId + "|" + openSta);
+
+            String chgId      = String.valueOf(normalized.getOrDefault("CHG_ID", "")).trim();
+            String openSta    = String.valueOf(normalized.getOrDefault("OPEN_CLO_STA", "")).trim();
+            String formStatus = String.valueOf(normalized.getOrDefault("CHG_FORM_STA", "")).trim();
+            String cycCnt     = String.valueOf(normalized.getOrDefault("CYC_CNT", "")).trim();
+
+            result.add(chgId + "|" + openSta + "|" + formStatus + "|" + cycCnt);
         }
+
         return result;
     }
 
-    /**
-     * Fetches CHG_ID, OPEN_CLO_STA, CHG_FORM_STA, ACYC_CNT for Open Charge scenario.
-     * Returns Set<String> in format: CHG_ID|OPEN_CLO_STA|CHG_FORM_STA|ACYC_CNT
-     */
-    public static Set<String> fetchOpenChargeData(String chargeId) throws Exception {
-        String query =
-            "SELECT A.CHG_ID, B.OPEN_CLO_STA, A.CHG_FORM_STA, A.ACYC_CNT " +
-            "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
-            "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID=?";
-
-        List<Map<String, Object>> rows = DBUtils.executeQuery(query, chargeId);
-        Set<String> result = new HashSet<>();
-
-        for (Map<String, Object> row : rows) {
-            Map<String, Object> normalized = new HashMap<>();
-            for (Map.Entry<String, Object> e : row.entrySet()) {
-                normalized.put(e.getKey().toUpperCase(), e.getValue());
-            }
-            String chgId      = String.valueOf(normalized.get("CHG_ID")).trim();
-            String openSta    = String.valueOf(normalized.get("OPEN_CLO_STA")).trim();
-            String formStatus = String.valueOf(normalized.get("CHG_FORM_STA")).trim();
-            String acycCnt    = String.valueOf(normalized.get("ACYC_CNT")).trim();
-
-            result.add(chgId + "|" + openSta + "|" + formStatus + "|" + acycCnt);
-        }
-        return result;
-    }
-
-    // Optional: main method for quick testing
+    // Optional: main method to test
     public static void main(String[] args) throws Exception {
         String chargeId = "SC0000000043";
-
-        System.out.println("Closed Charge Data:");
-        fetchChargeStatus(chargeId).forEach(System.out::println);
-
-        System.out.println("\nOpen Charge Data:");
-        fetchOpenChargeData(chargeId).forEach(System.out::println);
+        fetchChargeData(chargeId).forEach(System.out::println);
     }
 }
