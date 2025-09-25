@@ -1,7 +1,8 @@
 // Define which TestCaseIDs require DB check
 private static final Set<String> DB_REQUIRED_TESTS = Set.of(
     "SE78_TC_01", // replace with your actual TestCaseIDs
-    "SE78_TC_02"
+    "SE78_TC_02",
+    "TC04_ClosedChargeID" // include your specific test cases
 );
 
 @Test(dataProvider = "se78Data")
@@ -20,10 +21,10 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     if (DB_REQUIRED_TESTS.contains(testId)) {
         if (!chargeId.isEmpty()) {
             try {
-                Set<String> chargeData = DbFetchHelper.fetchChargeJoinData(chargeId);
+                Set<String> chargeData = DbFetchHelper.fetchChargeStatus(chargeId);
                 if (!chargeData.isEmpty()) {
                     String[] parts = chargeData.iterator().next().split("\\|");
-                    String openStatus = parts[2];
+                    String openStatus = parts.length >= 2 ? parts[1] : "UNKNOWN";
                     logBoth("DB Status: ChargeID found with OPEN_CLO_STA='" + openStatus + "'");
                 } else {
                     logBoth("DB Status: ChargeID not found in DB");
@@ -35,18 +36,6 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
             logBoth("DB Status: ChargeID is empty, skipping DB check");
         }
     }
-Set<String> chargeData = DbFetchHelper.fetchChargeJoinData(chargeId);
-if (!chargeData.isEmpty()) {
-    String[] parts = chargeData.iterator().next().split("\\|");
-    if (parts.length >= 3) {
-        String openStatus = parts[2];
-        logBoth("DB Status: ChargeID found with OPEN_CLO_STA='" + openStatus + "'");
-    } else {
-        logBoth("DB Status: ChargeID data incomplete, parts length=" + parts.length);
-    }
-} else {
-    logBoth("DB Status: ChargeID not found in DB");
-}
 
     // ----- Headers & API Call (existing logic) -----
     String jwt = JwtFetcher.fetchIb2bJwt();
