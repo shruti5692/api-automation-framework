@@ -1,52 +1,26 @@
-/**
- * Safely fetches a nested value from JSONObject/JSONArray using dot-separated path.
- * Supports array indices: e.g.
- * gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse.errorResponseDetails.errorInfo[0].extendedDetails.applicationId
- */
 private String getNestedValue(Object json, String path) {
     String[] parts = path.split("\\.");
     Object current = json;
 
     for (String part : parts) {
         if (part.contains("[") && part.contains("]")) {
-            // Handle array index
             String key = part.substring(0, part.indexOf("["));
             int index = Integer.parseInt(part.substring(part.indexOf("[") + 1, part.indexOf("]")));
-            if (current instanceof JSONObject && ((JSONObject) current).has(key)) {
+
+            if (current instanceof JSONObject) {
                 JSONArray arr = ((JSONObject) current).optJSONArray(key);
                 if (arr != null && arr.length() > index) current = arr.get(index);
                 else return "MISSING";
-            } else return "MISSING";
+            } else {
+                return "MISSING";
+            }
         } else {
-            if (current instanceof JSONObject && ((JSONObject) current).has(part)) {
-                current = ((JSONObject) current).get(part);
+            if (current instanceof JSONObject) {
+                if (((JSONObject) current).has(part)) current = ((JSONObject) current).get(part);
+                else return "MISSING";
             } else return "MISSING";
         }
     }
 
     return current == null ? "MISSING" : String.valueOf(current).trim();
-}
-
-/**
- * Generic field-wise validation.
- * Logs each field with expected vs actual and PASS/FAIL.
- */
-private boolean validateFields(Map<String, String> expectedFields, JSONObject apiResponse) {
-    boolean pass = true;
-
-    for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
-        String key = entry.getKey();
-        String expected = entry.getValue().trim();
-        String actual = getNestedValue(apiResponse, key);
-
-        boolean fieldPass = expected.equals(actual);
-        if (!fieldPass) pass = false;
-
-        logBoth("Field validation -> " + key +
-                " | Expected: " + expected +
-                " | Actual: " + actual +
-                " | Result: " + (fieldPass ? "PASS" : "FAIL"));
-    }
-
-    return pass;
 }
