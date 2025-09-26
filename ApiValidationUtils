@@ -1,7 +1,5 @@
 package utils;
 
-import com.aventstack.extentreports.ExtentTest;
-import com.aventstack.extentreports.Status;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -10,69 +8,99 @@ import java.util.Map;
 public class ApiValidationUtils {
 
     /**
-     * Fetches value from a nested JSON object using dot-path notation.
-     * Supports arrays using [index], e.g.
-     * "errorResponse.errorResponseDetails.errorInfo[0].code"
+     * Safely fetch a nested value from a JSONObject, handling arrays with [index].
+     * Returns "MISSING" if any part of the path is not found.
+     *
+     * Path example: "parent.childArray[0].fieldName"
      */
-    public static String getValueFromJson(JSONObject json, String path) {
-        try {
-            String[] parts = path.split("\\.");
-            Object current = json;
+    public static String getNestedValue(Object json, String path) {
+        String[] parts = path.split("\\.");
+        Object current = json;
 
-            for (String part : parts) {
-                if (part.contains("[")) { // handle arrays
-                    String key = part.substring(0, part.indexOf('['));
-                    int index = Integer.parseInt(part.substring(part.indexOf('[') + 1, part.indexOf(']')));
-                    current = ((JSONObject) current).optJSONObject(key).optJSONArray("").get(index);
+        for (String part : parts) {
+            if (part.contains("[") && part.contains("]")) {
+                // Array access: key[index]
+                String key = part.substring(0, part.indexOf("["));
+                int index = Integer.parseInt(
+                        part.substring(part.indexOf("[") + 1, part.indexOf("]"))
+                );
 
-                    // If the key directly maps to array
-                    if (current == null) {
-                        JSONArray arr = ((JSONObject) current).optJSONArray(key);
-                        current = (arr != null && arr.length() > index) ? arr.get(index) : null;
-                    }
-                } else {
-                    if (current instanceof JSONObject) {
-                        current = ((JSONObject) current).opt(part);
+                if (current instanceof JSONObject) {
+                    JSONArray arr = ((JSONObject) current).optJSONArray(key);
+                    if (arr != null && arr.length() > index) {
+                        current = arr.get(index);
                     } else {
                         return "MISSING";
                     }
+                } else {
+                    return "MISSING";
                 }
-
-                if (current == null) return "MISSING";
+            } else {
+                // Normal object key
+                if (current instanceof JSONObject) {
+                    if (((JSONObject) current).has(part)) {
+                        current = ((JSONObject) current).get(part);
+                    } else {
+                        return "MISSING";
+                    }
+                } else {
+                    return "MISSING";
+                }
             }
-
-            return current.toString();
-        } catch (Exception e) {
-            return "MISSING";
         }
+        return current == null ? "MISSING" : String.valueOf(current).trim();
     }
 
     /**
-     * Validates multiple fields from expected map against actual JSON response.
-     * Logs results in ExtentTest and console.
+     * Validates multiple fields from response JSON against expected values.
+     * Logs each field validation to console (or any logger you pass in).
+     *
+     * @param expectedFields Map<JSONPath, ExpectedValue>
+     * @param responseJson   JSONObject from API response
+     * @return true if all fields match, false otherwise
      */
-    public static boolean validateFields(Map<String, String> expectedFields, JSONObject responseJson, ExtentTest test) {
-        boolean pass = true;
+    public static boolean validateFields(
+            Map<String, String> expectedFields,
+            JSONObject responseJson
+    ) {
+        boolean allPass = true;
 
         for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
             String path = entry.getKey();
             String expected = entry.getValue();
-            String actual = getValueFromJson(responseJson, path);
+            String actual = getNestedValue(responseJson, path);
 
-            String result = expected.equals(actual) ? "PASS" : "FAIL";
-            pass = pass && result.equals("PASS");
+            boolean fieldPass = expected.equals(actual);
+            allPass &= fieldPass;
 
-            test.log(Status.INFO, String.format(
-                    "Field validation -> %s | Expected: %s | Actual: %s | Result: %s",
-                    path, expected, actual, result
-            ));
-
-            System.out.println(String.format(
-                    "Field validation -> %s | Expected: %s | Actual: %s | Result: %s",
-                    path, expected, actual, result
-            ));
+            System.out.println(
+                "Field validation -> " + path +
+                " | Expected: " + expected +
+                " | Actual: " + actual +
+                " | Result: " + (fieldPass ? "PASS" : "FAIL")
+            );
         }
+        return allPass;
+    }
 
-        return pass;
+    // Optional overload to accept a custom logger
+    public static boolean validateFields(
+            Map<String, String> expectedFields,
+            JSONObject responseJson,
+            java.util.function.Consumer<String> logger
+    ) {
+        boolean allPass = true;
+        for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
+            String path = entry.getKey();
+            String expected = entry.getValue();
+            String actual = getNestedValue(responseJson, path);
+            boolean fieldPass = expected.equals(actual);
+            allPass &= fieldPass;
+            logger.accept("Field validation -> " + path +
+                          " | Expected: " + expected +
+                          " | Actual: " + actual +
+                          " | Result: " + (fieldPass ? "PASS" : "FAIL"));
+        }
+        return allPass;
     }
 }
