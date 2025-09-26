@@ -1,3 +1,9 @@
+// Required imports at top of the file
+import org.json.JSONArray;
+import org.json.JSONObject;
+import okhttp3.Response; // if not already imported
+// other imports you already have...
+
 @Test(dataProvider = "se78Data")
 public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String testId       = row.getOrDefault("TestCaseID", "").trim();
@@ -15,12 +21,16 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     if (isDbRequired && !chargeId.isEmpty()) {
         logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
         try {
-            Set<String> chargeData = DbFetchHelper.fetchChargeData(chargeId);
-            if (!chargeData.isEmpty()) {
-                String[] parts = chargeData.iterator().next().split("\\|");
-                dbOpenStatus = parts.length > 1 ? parts[1] : "UNKNOWN";
-                dbFormStatus = parts.length > 2 ? parts[2] : "";
-                dbCycCnt     = parts.length > 3 ? parts[3] : "";
+            // NOTE: fetchChargeData must return Map<String,String>
+            Map<String, String> chargeData = DbFetchHelper.fetchChargeData(chargeId);
+            if (chargeData != null && !chargeData.isEmpty()) {
+                logBoth("DB Result (raw): " + chargeData.toString());
+
+                dbOpenStatus = chargeData.getOrDefault("OPEN_CLO_STA", "UNKNOWN");
+                dbFormStatus = chargeData.getOrDefault("CHG_FORM_STA", "");
+                // support both possible column names
+                dbCycCnt = chargeData.getOrDefault("CYC_CNT",
+                            chargeData.getOrDefault("ACYC_CNT", ""));
                 logBoth("DB Result: OPEN_CLO_STA='" + dbOpenStatus +
                         "', FormStatus='" + dbFormStatus + "', CYC_CNT='" + dbCycCnt + "'");
             } else {
@@ -116,14 +126,16 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
     // ----- Test Result -----
     if (pass) logPass("Test passed for " + testId);
-    else logFail(failReason);
+    else {
+        // provide a clearer fail reason in logs if possible
+        logFail("Field validation failed for " + testId);
+    }
 
     ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId,
-            pass ? "PASS" : "FAIL: " + failReason);
+            pass ? "PASS" : "FAIL: Field validation failed");
 
     logBoth("=== End of Test: " + testId + " ===\n");
 }
-
 
 /**
  * Safely fetches a nested value from a JSONObject, handling arrays with [index].
@@ -183,7 +195,7 @@ private boolean validateFields(Map<String, String> expectedFields, JSONObject re
 
     for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
         String path = entry.getKey();
-        String expected = entry.getValue();
+        String expected = entry.getValue() == null ? "" : entry.getValue().trim();
         String actual = getNestedValue(responseJson, path);
 
         boolean fieldPass = expected.equals(actual);
