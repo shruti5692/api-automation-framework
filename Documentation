@@ -1,0 +1,192 @@
+Here’s a structured outline you can follow to create clear, professional documentation for your API Testing Automation Framework.
+You can copy this into a doc/markdown file and fill in project-specific details.
+
+
+---
+
+1. Introduction
+
+Purpose:
+Briefly explain why this framework exists—e.g., to automate functional and field-level validation of REST APIs, integrate DB checks, and produce Extent HTML reports.
+
+Scope:
+Mention supported APIs (e.g., SE78) and environments (dev/QA/prod).
+
+
+---
+
+2. Architecture Overview
+
+Diagram (optional):
+Show the high-level flow:
+
+Excel → TestNG DataProvider → Test Class → 
+   ├─ JwtFetcher (token)  
+   ├─ DbFetchHelper (DB validation)  
+   └─ ApiValidationUtils (field-wise validation) 
+→ Extent Report
+
+Describe:
+
+Data Source: Test cases stored in Excel (columns: TestCaseID, ChargeID, Headers, ExpectedStatus, ExpectedFields, etc.).
+
+Execution Engine: TestNG with Maven/Gradle build.
+
+Reporting: Extent Reports for HTML output.
+
+Database Layer: DB2 connection via JDBC.
+
+
+
+---
+
+3. Key Components
+
+Component	Responsibility
+
+BaseTest	Sets up OkHttp client, handles common setup/teardown.
+callSecurityChargeApi	Core TestNG method: reads Excel row, fetches DB data when needed, calls API, validates response.
+DbFetchHelper	Encapsulates DB queries for SEC_CHARGE and CUD_PROD_RELN.
+JwtFetcher	Generates iB2B JWT tokens for authentication.
+ApiValidationUtils	getNestedValue() and validateFields() for nested JSON and field-wise validation.
+ConfigReader	Reads configuration like base.url from config.properties.
+ExcelUtils	Reads input rows and writes PASS/FAIL back to the sheet.
+
+
+
+---
+
+4. Test Data & Configuration
+
+Excel Sheet Fields
+
+TestCaseID: Unique ID for the test.
+
+ChargeID: Charge ID to test.
+
+Headers: JSON string of extra headers.
+
+ExpectedStatus: Expected HTTP status (e.g., 200/400).
+
+ExpectedFields: JSON mapping of nested response fields to expected values (for field-wise validation).
+
+
+config.properties
+
+base.url: Base URL until /securities
+
+DB credentials, environment toggles, etc.
+
+
+
+
+---
+
+5. Test Flow
+
+1. DataProvider loads Excel rows.
+
+
+2. For each row:
+
+DB prerequisite (if TestCaseID is in DB_REQUIRED_TESTS).
+
+Header preparation with JWT replacement.
+
+API Call using OkHttp.
+
+Validation
+
+HTTP Status vs. ExpectedStatus.
+
+Field-wise validation:
+
+If DB-based: compare FormStatus, cyclicCount, etc. with DB values.
+
+If Excel-based: compare each field in ExpectedFields with the JSON response using ApiValidationUtils.validateFields.
+
+
+
+
+
+3. Result Logging: logBoth() writes to console + Extent report + Excel result column.
+
+
+
+
+---
+
+6. Logging & Reporting
+
+All steps (DB fetch, header creation, API call, field validation) logged to:
+
+Console
+
+Extent HTML Report (Field validation -> path | Expected | Actual | Result).
+
+
+
+Example snippet:
+
+Field validation -> gb-hbeu-...responseBody.FormStatus
+| Expected: SGN | Actual: SGN | Result: PASS
+
+
+---
+
+7. Running the Tests
+
+Command Line (Maven):
+
+mvn clean test -DsuiteXmlFile=testng.xml
+
+Parameters:
+Switch environments by editing config.properties or using -Denv=qa.
+
+
+---
+
+8. Extending the Framework
+
+Adding a new API
+
+Add its test data to Excel.
+
+Add any DB queries to DbFetchHelper.
+
+Write a new TestNG class if custom logic is required.
+
+
+Adding new validation fields
+
+Update ExpectedFields column in Excel with nested JSON paths.
+
+
+
+
+---
+
+9. Best Practices & Notes
+
+Keep SQL in helpers to avoid duplication.
+
+Use descriptive TestCaseIDs to control DB lookups.
+
+Ensure consistent JSON path notation for nested arrays/objects.
+
+
+
+---
+
+Optional Sections
+
+CI/CD Integration – how to run tests in Jenkins/GitHub Actions.
+
+Troubleshooting – common errors (e.g., “Index out of bounds” or DB connection issues).
+
+
+
+---
+
+This layout makes it easy for your project lead or new team members to understand what the framework does, how it works, and how to extend it.
+
