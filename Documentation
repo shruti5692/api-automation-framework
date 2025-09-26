@@ -1,192 +1,270 @@
-Here’s a structured outline you can follow to create clear, professional documentation for your API Testing Automation Framework.
-You can copy this into a doc/markdown file and fill in project-specific details.
+Here’s a complete draft you can copy into a Word/Google Doc or Markdown file and adjust to your team’s branding.
+It includes every point you asked for plus some helpful extras.
 
 
 ---
+
+API Automation Framework – Documentation
 
 1. Introduction
 
-Purpose:
-Briefly explain why this framework exists—e.g., to automate functional and field-level validation of REST APIs, integrate DB checks, and produce Extent HTML reports.
-
-Scope:
-Mention supported APIs (e.g., SE78) and environments (dev/QA/prod).
+This document describes the API Automation Framework developed for automated testing of REST APIs.
+It explains the folder structure, the workflow, reusable utilities, recent customizations for the current SE78 API, and guidelines to onboard new APIs quickly.
 
 
 ---
 
-2. Architecture Overview
+2. Framework Structure
 
-Diagram (optional):
-Show the high-level flow:
+Root Layout (from IntelliJ project view):
 
-Excel → TestNG DataProvider → Test Class → 
-   ├─ JwtFetcher (token)  
-   ├─ DbFetchHelper (DB validation)  
-   └─ ApiValidationUtils (field-wise validation) 
-→ Extent Report
+api-automation-framework/
+├─ src
+│  ├─ main
+│  │  └─ java
+│  │     └─ org.framework
+│  │        ├─ config
+│  │        │   └─ ConfigManager.java
+│  │        └─ utils
+│  │            ├─ ApiValidationUtils.java
+│  │            ├─ CryptoUtils.java
+│  │            ├─ DBUtils.java
+│  │            ├─ ExcelUtils.java
+│  │            └─ JwtFetcher.java
+│  ├─ test
+│  │  └─ java
+│  │     └─ tests
+│  │         ├─ CustomerAccountTest.java
+│  │         ├─ DbFetchHelper.java
+│  │         └─ SE78Test.java
+│  └─ resources
+│      ├─ config.properties
+│      └─ TestData.xlsx
+├─ target/ (build output)
+├─ pom.xml (Maven build)
+├─ testng.xml (suite config)
+└─ ExtentReport.html (HTML report generated after run)
 
-Describe:
+Key Packages
 
-Data Source: Test cases stored in Excel (columns: TestCaseID, ChargeID, Headers, ExpectedStatus, ExpectedFields, etc.).
+config – reads configuration (base URL, DB credentials, etc.).
 
-Execution Engine: TestNG with Maven/Gradle build.
+utils – reusable helpers (DB, Excel, JWT, field-wise validation).
 
-Reporting: Extent Reports for HTML output.
-
-Database Layer: DB2 connection via JDBC.
-
-
-
----
-
-3. Key Components
-
-Component	Responsibility
-
-BaseTest	Sets up OkHttp client, handles common setup/teardown.
-callSecurityChargeApi	Core TestNG method: reads Excel row, fetches DB data when needed, calls API, validates response.
-DbFetchHelper	Encapsulates DB queries for SEC_CHARGE and CUD_PROD_RELN.
-JwtFetcher	Generates iB2B JWT tokens for authentication.
-ApiValidationUtils	getNestedValue() and validateFields() for nested JSON and field-wise validation.
-ConfigReader	Reads configuration like base.url from config.properties.
-ExcelUtils	Reads input rows and writes PASS/FAIL back to the sheet.
-
-
-
----
-
-4. Test Data & Configuration
-
-Excel Sheet Fields
-
-TestCaseID: Unique ID for the test.
-
-ChargeID: Charge ID to test.
-
-Headers: JSON string of extra headers.
-
-ExpectedStatus: Expected HTTP status (e.g., 200/400).
-
-ExpectedFields: JSON mapping of nested response fields to expected values (for field-wise validation).
-
-
-config.properties
-
-base.url: Base URL until /securities
-
-DB credentials, environment toggles, etc.
-
+tests – individual TestNG classes for different APIs.
 
 
 
 ---
 
-5. Test Flow
+3. Working Flow
 
-1. DataProvider loads Excel rows.
-
-
-2. For each row:
-
-DB prerequisite (if TestCaseID is in DB_REQUIRED_TESTS).
-
-Header preparation with JWT replacement.
-
-API Call using OkHttp.
-
-Validation
-
-HTTP Status vs. ExpectedStatus.
-
-Field-wise validation:
-
-If DB-based: compare FormStatus, cyclicCount, etc. with DB values.
-
-If Excel-based: compare each field in ExpectedFields with the JSON response using ApiValidationUtils.validateFields.
+1. Read Test Data
+TestNG DataProvider loads each row from TestData.xlsx (test case ID, headers, expected status, expected fields, etc.).
 
 
+2. Prepare Request
+JwtFetcher generates/refreshes JWT tokens. Headers are merged with row-specific values.
+
+
+3. DB Validation (Conditional)
+If isDbRequired is true, DbFetchHelper runs queries (e.g., SEC_CHARGE) and stores results for comparison.
+
+
+4. API Call
+Using OkHttp client, a REST request is sent to the URL defined in config.properties (base path up to /securities).
+
+
+5. Response Validation
+ApiValidationUtils performs:
+
+Status check (HTTP code).
+
+Field-wise validation for:
+
+Excel-driven tests (matches ExpectedFields JSON).
+
+DB-driven tests (compares with DB values).
 
 
 
-3. Result Logging: logBoth() writes to console + Extent report + Excel result column.
 
-
-
-
----
-
-6. Logging & Reporting
-
-All steps (DB fetch, header creation, API call, field validation) logged to:
+6. Reporting
+Results are logged to:
 
 Console
 
-Extent HTML Report (Field validation -> path | Expected | Actual | Result).
+Extent HTML report with PASS/FAIL per field
+
+Excel result column for quick view.
 
 
 
-Example snippet:
-
-Field validation -> gb-hbeu-...responseBody.FormStatus
-| Expected: SGN | Actual: SGN | Result: PASS
 
 
 ---
 
-7. Running the Tests
+4. Time of Preparation
 
-Command Line (Maven):
+Initial Framework Setup: ~2 weeks
+Folder structure, Maven/TestNG integration, Excel + DB utilities, JWT handling, Extent report.
+
+Current SE78 API Onboarding & Enhancements: ~3–4 days
+Added field-wise validation, DB fetch helper queries, new config keys.
+
+
+
+---
+
+5. Reusable Components
+
+Component	Purpose
+
+ApiValidationUtils	getNestedValue & validateFields for deep JSON keys
+ExcelUtils	Generic Excel read/write for test data and results
+DBUtils / DbFetchHelper	DB2 connection & query execution
+JwtFetcher	Generates iB2B JWT tokens
+ConfigManager	Centralized property file reader
+Extent Reporting Hooks	Unified logging for PASS/FAIL, reused across tests
+
+
+These modules are API-agnostic and can be reused for any REST service.
+
+
+---
+
+6. Changes for the Current SE78 API
+
+Added field-wise validation based on ExpectedFields JSON in Excel.
+
+Implemented DB prerequisite check for Charge ID presence and status.
+
+Extended ApiValidationUtils to log each field comparison in the Extent report.
+
+Configured config.properties with hard-coded base URL up to /securities for environment flexibility.
+
+
+
+---
+
+7. Using the Framework for Other APIs
+
+Steps
+
+1. Create Test Data
+
+Add rows to TestData.xlsx with:
+
+TestCaseID
+
+API endpoint relative to base URL
+
+Headers (JSON)
+
+Expected status & ExpectedFields JSON
+
+
+
+
+2. Add DB Queries (if needed)
+
+Write a helper method in DbFetchHelper.
+
+
+
+3. Write/Copy Test Class
+
+Create a new class in tests package, reusing BaseTest logic or copy from SE78Test.
+
+
+
+4. Update config.properties
+
+Add base URL or environment-specific keys.
+
+
+
+
+Effort Estimate
+
+Simple API (no DB): ~0.5–1 day
+
+API with DB validations: ~1–2 days
+
+
+Minimal Skills Required
+
+Java (basic OOP & TestNG annotations)
+
+JSON path understanding
+
+SQL for DB-driven tests
+
+Familiarity with Maven and IntelliJ
+
+
+
+---
+
+8. Execution
+
+Command:
 
 mvn clean test -DsuiteXmlFile=testng.xml
 
-Parameters:
-Switch environments by editing config.properties or using -Denv=qa.
+HTML report generated at: target/ExtentReport.html
 
 
 ---
 
-8. Extending the Framework
+9. CI/CD Integration (Optional)
 
-Adding a new API
+The framework can be integrated with Jenkins or GitHub Actions:
 
-Add its test data to Excel.
+Trigger on commit or nightly schedule.
 
-Add any DB queries to DbFetchHelper.
-
-Write a new TestNG class if custom logic is required.
-
-
-Adding new validation fields
-
-Update ExpectedFields column in Excel with nested JSON paths.
-
+Archive ExtentReport.html as a build artifact.
 
 
 
 ---
 
-9. Best Practices & Notes
+10. Troubleshooting
 
-Keep SQL in helpers to avoid duplication.
+SQLCODE=-206 – Check if the queried column exists.
 
-Use descriptive TestCaseIDs to control DB lookups.
+Missing Field Validation – Verify JSON path in ExpectedFields.
 
-Ensure consistent JSON path notation for nested arrays/objects.
-
-
-
----
-
-Optional Sections
-
-CI/CD Integration – how to run tests in Jenkins/GitHub Actions.
-
-Troubleshooting – common errors (e.g., “Index out of bounds” or DB connection issues).
+JWT Expiry – Ensure token fetch logic runs before each call.
 
 
 
 ---
 
-This layout makes it easy for your project lead or new team members to understand what the framework does, how it works, and how to extend it.
+11. Future Enhancements
+
+Parallel execution across environments.
+
+Support for GraphQL and SOAP.
+
+Automatic email/slack notification with attached Extent report.
+
+
+
+---
+
+Quick Summary Table
+
+Area	Detail
+
+Prep Time	~2 weeks base + 3–4 days per new API
+Reusable Components	ExcelUtils, ApiValidationUtils, DBUtils…
+Skills to Extend	Java, TestNG, SQL basics
+Avg New API Onboarding	0.5–2 days depending on DB requirement
+
+
+
+---
+
+This document serves as a complete guide for onboarding team members, maintaining the SE78 test suite, and extending the framework to any new API with minimal effort.
 
