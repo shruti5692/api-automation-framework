@@ -2,100 +2,61 @@ package utils;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
-
 import java.util.Map;
+import java.util.function.Consumer;
 
 public class ApiValidationUtils {
 
-    /**
-     * Safely fetch a nested value from a JSONObject, handling arrays with [index].
-     * Returns "MISSING" if any part of the path is not found.
-     *
-     * Path example: "parent.childArray[0].fieldName"
-     */
     public static String getNestedValue(Object json, String path) {
         String[] parts = path.split("\\.");
         Object current = json;
 
         for (String part : parts) {
             if (part.contains("[") && part.contains("]")) {
-                // Array access: key[index]
                 String key = part.substring(0, part.indexOf("["));
                 int index = Integer.parseInt(
                         part.substring(part.indexOf("[") + 1, part.indexOf("]"))
                 );
-
                 if (current instanceof JSONObject) {
                     JSONArray arr = ((JSONObject) current).optJSONArray(key);
                     if (arr != null && arr.length() > index) {
                         current = arr.get(index);
-                    } else {
-                        return "MISSING";
-                    }
-                } else {
-                    return "MISSING";
-                }
+                    } else return "MISSING";
+                } else return "MISSING";
             } else {
-                // Normal object key
                 if (current instanceof JSONObject) {
                     if (((JSONObject) current).has(part)) {
                         current = ((JSONObject) current).get(part);
-                    } else {
-                        return "MISSING";
-                    }
-                } else {
-                    return "MISSING";
-                }
+                    } else return "MISSING";
+                } else return "MISSING";
             }
         }
         return current == null ? "MISSING" : String.valueOf(current).trim();
     }
 
     /**
-     * Validates multiple fields from response JSON against expected values.
-     * Logs each field validation to console (or any logger you pass in).
+     * Validate multiple fields and log each comparison.
      *
      * @param expectedFields Map<JSONPath, ExpectedValue>
-     * @param responseJson   JSONObject from API response
-     * @return true if all fields match, false otherwise
+     * @param responseJson   API response
+     * @param logger         e.g. this::logBoth  -> logs to console + Extent
      */
     public static boolean validateFields(
             Map<String, String> expectedFields,
-            JSONObject responseJson
-    ) {
-        boolean allPass = true;
-
-        for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
-            String path = entry.getKey();
-            String expected = entry.getValue();
-            String actual = getNestedValue(responseJson, path);
-
-            boolean fieldPass = expected.equals(actual);
-            allPass &= fieldPass;
-
-            System.out.println(
-                "Field validation -> " + path +
-                " | Expected: " + expected +
-                " | Actual: " + actual +
-                " | Result: " + (fieldPass ? "PASS" : "FAIL")
-            );
-        }
-        return allPass;
-    }
-
-    // Optional overload to accept a custom logger
-    public static boolean validateFields(
-            Map<String, String> expectedFields,
             JSONObject responseJson,
-            java.util.function.Consumer<String> logger
+            Consumer<String> logger
     ) {
         boolean allPass = true;
+
         for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
             String path = entry.getKey();
             String expected = entry.getValue();
-            String actual = getNestedValue(responseJson, path);
+            String actual   = getNestedValue(responseJson, path);
+
             boolean fieldPass = expected.equals(actual);
             allPass &= fieldPass;
+
+            // *** This goes to Extent via logger ***
             logger.accept("Field validation -> " + path +
                           " | Expected: " + expected +
                           " | Actual: " + actual +
@@ -103,4 +64,4 @@ public class ApiValidationUtils {
         }
         return allPass;
     }
-}
+}}
