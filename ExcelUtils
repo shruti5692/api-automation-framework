@@ -8,10 +8,13 @@ import java.util.*;
 
 /**
  * Generic Excel reader & writer.
- * - readSheet returns List<Map<header, value>> where value is raw string (JSON fields still contain ENC(...))
- * - writeResult writes a "Result" cell for the matching TestCaseID
+ * - readSheet returns List<Map<header, value>> where value is raw string.
+ * - writeResult writes a "Result" cell for the matching TestCaseID.
+ * - writeResultWithDuration also writes DurationSec (test execution time).
  */
 public class ExcelUtils {
+
+    // ---------------- Existing Methods (unchanged) ---------------- //
 
     public static List<Map<String, String>> readSheet(String excelPath, String sheetName) throws Exception {
         List<Map<String, String>> list = new ArrayList<>();
@@ -57,6 +60,26 @@ public class ExcelUtils {
     }
 
     public static void writeResult(String excelPath, String sheetName, String testCaseId, String result) throws Exception {
+        writeResultWithDuration(excelPath, sheetName, testCaseId, result, null);
+    }
+
+    // ---------------- New/Extended Method ---------------- //
+
+    /**
+     * Writes both Result and (optionally) DurationSec for a test case.
+     *
+     * @param excelPath    Excel file path
+     * @param sheetName    Sheet name
+     * @param testCaseId   TestCaseID to update
+     * @param result       PASS/FAIL text
+     * @param durationSec  Duration in seconds (nullable; if null, only Result is written)
+     */
+    public static void writeResultWithDuration(String excelPath,
+                                               String sheetName,
+                                               String testCaseId,
+                                               String result,
+                                               Long durationSec) throws Exception {
+
         FileInputStream fis = new FileInputStream(excelPath);
         Workbook wb = new XSSFWorkbook(fis);
         fis.close();
@@ -68,6 +91,9 @@ public class ExcelUtils {
         int cols = header.getLastCellNum();
         int resultCol = -1;
         int tcCol = -1;
+        int durationCol = -1;
+
+        // locate or create Result / DurationSec columns
         for (int i = 0; i < cols; i++) {
             Cell c = header.getCell(i);
             if (c == null) continue;
@@ -75,13 +101,17 @@ public class ExcelUtils {
             String h = c.getStringCellValue().trim();
             if ("Result".equalsIgnoreCase(h)) resultCol = i;
             if ("TestCaseID".equalsIgnoreCase(h)) tcCol = i;
+            if ("DurationSec".equalsIgnoreCase(h)) durationCol = i;
         }
         if (tcCol == -1) throw new IllegalArgumentException("TestCaseID header not found in Excel");
 
-        if (resultCol == -1) { // append result column
-            resultCol = cols;
-            Cell c = header.createCell(resultCol, CellType.STRING);
-            c.setCellValue("Result");
+        if (resultCol == -1) {
+            resultCol = cols++;
+            header.createCell(resultCol, CellType.STRING).setCellValue("Result");
+        }
+        if (durationSec != null && durationCol == -1) {
+            durationCol = cols++;
+            header.createCell(durationCol, CellType.STRING).setCellValue("DurationSec");
         }
 
         boolean updated = false;
@@ -93,9 +123,17 @@ public class ExcelUtils {
             tcCell.setCellType(CellType.STRING);
             String tc = tcCell.getStringCellValue().trim();
             if (tc.equals(testCaseId)) {
+                // Result
                 Cell res = row.getCell(resultCol);
                 if (res == null) res = row.createCell(resultCol, CellType.STRING);
                 res.setCellValue(result);
+
+                // Duration (if provided)
+                if (durationSec != null) {
+                    Cell dur = row.getCell(durationCol);
+                    if (dur == null) dur = row.createCell(durationCol, CellType.NUMERIC);
+                    dur.setCellValue(durationSec);
+                }
                 updated = true;
                 break;
             }
@@ -106,20 +144,11 @@ public class ExcelUtils {
         }
         wb.close();
 
-        if (!updated) throw new IllegalStateException("Could not find TestCaseID " + testCaseId + " to write result");
+        if (!updated)
+            throw new IllegalStateException("Could not find TestCaseID " + testCaseId + " to write result/duration");
     }
-}        }
-        wb.close();
 
-        if (!updated) throw new IllegalStateException("Could not find TestCaseID " + testCaseId + " to write result");
-    }
-}
-
-/**
-     * Very small JSON-to-Map parser for simple flat JSON objects such as:
-     * {"key":"value","k2":"v2"}
-     * It ignores whitespace and does not support nested objects/arrays.
-     */
+    // ---------------- Existing helper remains ---------------- //
     public static Map<String,String> jsonToMap(String json) {
         Map<String,String> map = new LinkedHashMap<>();
         if (json == null || json.trim().isEmpty()) return map;
@@ -128,7 +157,6 @@ public class ExcelUtils {
         if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
             trimmed = trimmed.substring(1, trimmed.length()-1);
         }
-        // split by comma that are not inside quotes (simple case: no nested JSON)
         String[] pairs = trimmed.split("\\s*,\\s*");
         for (String p : pairs) {
             if (p.isEmpty()) continue;
@@ -136,7 +164,6 @@ public class ExcelUtils {
             if (kv.length == 2) {
                 String key = kv[0].trim();
                 String val = kv[1].trim();
-                // strip quotes if present
                 if (key.startsWith("\"") && key.endsWith("\"")) {
                     key = key.substring(1, key.length()-1);
                 }
@@ -148,3 +175,4 @@ public class ExcelUtils {
         }
         return map;
     }
+}
