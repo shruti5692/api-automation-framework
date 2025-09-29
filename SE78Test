@@ -1,11 +1,9 @@
-// Required imports at top of the file
-import org.json.JSONArray;
-import org.json.JSONObject;
-import okhttp3.Response; // if not already imported
-// other imports you already have...
-
 @Test(dataProvider = "se78Data")
 public void callSecurityChargeApi(Map<String, String> row) throws Exception {
+
+    // ------------------- START TIMER ------------------- //
+    long startTime = System.currentTimeMillis();
+
     String testId       = row.getOrDefault("TestCaseID", "").trim();
     String chargeId     = row.getOrDefault("ChargeID", "").trim();
     String headers      = row.getOrDefault("Headers", "").trim();
@@ -21,17 +19,14 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     if (isDbRequired && !chargeId.isEmpty()) {
         logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
         try {
-            // NOTE: fetchChargeData must return Map<String,String>
             Map<String, String> chargeData = DbFetchHelper.fetchChargeData(chargeId);
             if (chargeData != null && !chargeData.isEmpty()) {
-                logBoth("DB Result (raw): " + chargeData.toString());
-
+                logBoth("DB Result (raw): " + chargeData);
                 dbOpenStatus = chargeData.getOrDefault("OPEN_CLO_STA", "UNKNOWN");
                 dbFormStatus = chargeData.getOrDefault("CHG_FORM_STA", "");
-                // support both possible column names
-                dbCycCnt = chargeData.getOrDefault("CYC_CNT",
-                            chargeData.getOrDefault("ACYC_CNT", ""));
-                logBoth("DB Result: OPEN_CLO_STA='" + dbOpenStatus +
+                dbCycCnt     = chargeData.getOrDefault("CYC_CNT",
+                               chargeData.getOrDefault("ACYC_CNT", ""));
+                logBoth("DB Parsed: OPEN_CLO_STA='" + dbOpenStatus +
                         "', FormStatus='" + dbFormStatus + "', CYC_CNT='" + dbCycCnt + "'");
             } else {
                 logBoth("[WARN] ChargeID not found in DB");
@@ -48,14 +43,15 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
     boolean trustTokenPresent = false;
+
     if (!headers.isBlank()) {
         JSONObject headerObj = new JSONObject(headers);
         for (Iterator<String> it = headerObj.keys(); it.hasNext();) {
             String k = it.next();
             String v = headerObj.optString(k, "");
             if (v.contains("{TRUST_TOKEN}")) v = v.replace("{TRUST_TOKEN}", jwt);
-            if (k.equalsIgnoreCase("X-HSBC-E2E-Trust-Token") || k.equalsIgnoreCase("X-HSBC-TRUST-TOKEN"))
-                trustTokenPresent = true;
+            if (k.equalsIgnoreCase("X-HSBC-E2E-Trust-Token") ||
+                k.equalsIgnoreCase("X-HSBC-TRUST-TOKEN")) trustTokenPresent = true;
             headerBuilder.add(k, v);
             logBoth("Header added: " + k + "=" + v);
         }
@@ -67,9 +63,8 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
     // ----- API Call -----
     String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
-    String url = "https://digitaldev-int-rbwm.systems.uk.hsbc"
-               + "/cb-rps-05/gb-hbeu-rps-mtg-prod-sec-chrg-enq-sct-internal-proxy"
-               + "/v1/securities/" + safeCharge + "/chargedtl";
+    String url = Config.get("base.url") +  // read base from config.properties
+                 "/v1/securities/" + safeCharge + "/chargedtl";
     logBoth("Step: Calling SE78 API with URL: " + url);
 
     int status;
@@ -84,12 +79,14 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     }
 
     logBoth("HTTP Status: " + status);
-    logBoth("Response Body (truncated): " + (body.length() > 500 ? body.substring(0, 500) + "..." : body));
+    logBoth("Response Body (truncated): " + (body.length() > 500
+            ? body.substring(0, 500) + "..." : body));
 
     // ----- Status Validation -----
     if (!expStatusStr.isBlank()) {
         int expStatus = Integer.parseInt(expStatusStr);
-        Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testId);
+        Assert.assertEquals(status, expStatus,
+                "Unexpected HTTP status for test " + testId);
         logBoth("Expected HTTP status matched: " + expStatus);
     }
 
@@ -101,111 +98,51 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         logBoth("Step: Performing DB field-wise validation");
         if ("TC04_ClosedChargeID".equals(testId)) {
             Map<String, String> closedFields = Map.of(
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse.errorResponseDetails.errorInfo[0].code",
-                "4310"
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse."
+                + "errorResponseDetails.errorInfo[0].code", "4310"
             );
-            if (!validateFields(closedFields, responseJson)) pass = false;
-        } else { // OpenChargeID
+            if (!validateFields(closedFields, responseJson)) {
+                pass = false;
+                failReason = "ClosedChargeID mismatch";
+            }
+        } else {
             Map<String, String> openFields = Map.of(
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.FormStatus",
-                dbFormStatus,
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.cyclicCount",
-                dbCycCnt,
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage.responseBody.errorCode",
-                "0"
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage."
+                + "responseBody.FormStatus", dbFormStatus,
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage."
+                + "responseBody.cyclicCount", dbCycCnt,
+                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage."
+                + "responseBody.errorCode", "0"
             );
-            if (!validateFields(openFields, responseJson)) pass = false;
+            if (!validateFields(openFields, responseJson)) {
+                pass = false;
+                failReason = "OpenChargeID DB field mismatch";
+            }
         }
     } else if (!expectedFieldsJson.isBlank()) {
         logBoth("Step: Performing Excel field-wise validation");
         JSONObject expJson = new JSONObject(expectedFieldsJson);
         Map<String, String> excelFields = new HashMap<>();
         for (String k : expJson.keySet()) excelFields.put(k, expJson.get(k).toString());
-        if (!validateFields(excelFields, responseJson)) pass = false;
-    }
-
-    // ----- Test Result -----
-    if (pass) logPass("Test passed for " + testId);
-    else {
-        // provide a clearer fail reason in logs if possible
-        logFail("Field validation failed for " + testId);
-    }
-
-    ExcelUtils.writeResult(EXCEL_PATH, SHEET_NAME, testId,
-            pass ? "PASS" : "FAIL: Field validation failed");
-
-    logBoth("=== End of Test: " + testId + " ===\n");
-}
-
-/**
- * Safely fetches a nested value from a JSONObject, handling arrays with [index].
- * Returns "MISSING" if path does not exist.
- *
- * @param json JSONObject to traverse
- * @param path Dot-separated path with optional array indices, e.g.
- *             "parent.childArray[0].fieldName"
- */
-private String getNestedValue(Object json, String path) {
-    String[] parts = path.split("\\.");
-    Object current = json;
-
-    for (String part : parts) {
-        if (part.contains("[") && part.contains("]")) {
-            // Array access: key[index]
-            String key = part.substring(0, part.indexOf("["));
-            int index = Integer.parseInt(part.substring(part.indexOf("[") + 1, part.indexOf("]")));
-
-            if (current instanceof JSONObject) {
-                JSONArray arr = ((JSONObject) current).optJSONArray(key);
-                if (arr != null && arr.length() > index) {
-                    current = arr.get(index);
-                } else {
-                    return "MISSING";
-                }
-            } else {
-                return "MISSING";
-            }
-        } else {
-            // Normal object key
-            if (current instanceof JSONObject) {
-                if (((JSONObject) current).has(part)) {
-                    current = ((JSONObject) current).get(part);
-                } else {
-                    return "MISSING";
-                }
-            } else {
-                return "MISSING";
-            }
+        if (!validateFields(excelFields, responseJson)) {
+            pass = false;
+            failReason = "Excel field mismatch";
         }
     }
 
-    return current == null ? "MISSING" : String.valueOf(current).trim();
-}
-
-/**
- * Validates multiple fields from response JSON against expected values.
- * Logs each field validation to Extent & console.
- *
- * @param expectedFields Map<JSONPath, ExpectedValue>
- * @param responseJson JSONObject from API response
- * @return true if all fields match, false otherwise
- */
-private boolean validateFields(Map<String, String> expectedFields, JSONObject responseJson) {
-    boolean allPass = true;
-
-    for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
-        String path = entry.getKey();
-        String expected = entry.getValue() == null ? "" : entry.getValue().trim();
-        String actual = getNestedValue(responseJson, path);
-
-        boolean fieldPass = expected.equals(actual);
-        allPass &= fieldPass;
-
-        logBoth("Field validation -> " + path +
-                " | Expected: " + expected +
-                " | Actual: " + actual +
-                " | Result: " + (fieldPass ? "PASS" : "FAIL"));
+    // ----- Test Result & Duration -----
+    long durationSec = (System.currentTimeMillis() - startTime) / 1000;
+    if (pass) {
+        logPass("Test passed for " + testId + " in " + durationSec + " sec");
+    } else {
+        logFail("Field validation failed for " + testId + " Reason: " + failReason);
     }
 
-    return allPass;
+    // Write both result and execution time to Excel
+    ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME,
+            testId,
+            pass ? "PASS" : "FAIL: " + failReason,
+            durationSec);
+
+    logBoth("=== End of Test: " + testId + " (Duration: " + durationSec + " sec) ===\n");
 }
