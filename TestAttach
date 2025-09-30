@@ -1,0 +1,21 @@
+On Error Resume Next
+
+Dim connList, psObj, sessionName
+Set connList = CreateObject("PCOMM.autECLConnList")
+
+If connList.Count = 0 Then
+    WScript.Echo "No sessions found."
+    WScript.Quit 1
+End If
+
+sessionName = connList(1).Name
+WScript.Echo "Attaching to session: " & sessionName
+
+Set psObj = CreateObject("PCOMM.autECLPS")
+psObj.SetConnectionByName sessionName
+
+' Copy entire screen text (not bitmap yet)
+Dim screenText
+screenText = psObj.GetText(1,1,24,80)  ' row1,col1 to row24,col80
+WScript.Echo "Screen text snapshot:"
+WScript.Echo screenText
