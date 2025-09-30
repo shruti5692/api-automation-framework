@@ -1,0 +1,30 @@
+' TakeScreenshotClipboard.vbs
+Dim psObj, sessionName
+Set psObj = CreateObject("PCOMM.autECLPS")
+
+sessionName = "A"
+psObj.SetConnectionByName sessionName
+
+' Copy the screen to clipboard
+psObj.CopyScreen
+
+' Create a FileSystemObject to save clipboard as PNG via Excel (or MS Paint workaround)
+Dim WshShell
+Set WshShell = CreateObject("WScript.Shell")
+
+' Open Paint
+WshShell.Run "mspaint"
+WScript.Sleep 1000
+
+' Paste screen and save
+WshShell.SendKeys "^v"          ' Ctrl + V
+WScript.Sleep 500
+WshShell.SendKeys "^s"          ' Ctrl + S
+WScript.Sleep 500
+WshShell.SendKeys WScript.Arguments.Item(0)   ' full path including filename
+WScript.Sleep 500
+WshShell.SendKeys "{ENTER}"
+WScript.Sleep 500
+WshShell.SendKeys "%{F4}"       ' Alt + F4 to close Paint
+
+WScript.Echo "Screenshot saved via Paint to: " & WScript.Arguments.Item(0)
