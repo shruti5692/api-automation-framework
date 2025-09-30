@@ -1,40 +1,59 @@
 package com.framework.utils;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 public class MainframeUtils {
 
-    private static final String COMBINED_VB_SCRIPT = "C:\\Automation\\RunMacroAndSnapshot.vbs";
-    private static final String MACRO_PATH = "src\\test\\resources\\DBSNAPSHOT.mac";
-    private static final String SNAPSHOT_DIR = "src\\test\\resources\\";
+    // Paths — adjust according to your setup
+    private static final String PCOMM_EXE = "C:\\Program Files (x86)\\IBM\\Personal Communications\\pcsws.exe";
+    private static final String SESSION_FILE = "C:\\Program Files (x86)\\IBM\\Personal Communications\\Sessions\\A.ws";
+    private static final String MACRO_FILE = "src\\test\\resources\\DBSNAPSHOT.mac";
+    private static final String SCREENSHOT_DIR = "src\\test\\resources\\screenshots\\";
 
-    public static void runMacroAndTakeSnapshot(String testCaseId) throws Exception {
-        String snapshotPath = SNAPSHOT_DIR + testCaseId + ".png";
+    /**
+     * Runs the macro to navigate to DB screen and save screenshot.
+     * Returns the full path of the screenshot for reporting.
+     */
+    public static String captureDbEvidence(String testCaseId) throws Exception {
+        // Ensure screenshot directory exists
+        Path dir = Paths.get(SCREENSHOT_DIR);
+        if (!Files.exists(dir)) {
+            Files.createDirectories(dir);
+        }
 
-        String cscript32 = "C:\\Windows\\SysWOW64\\cscript.exe";
+        // Prepare output file path
+        String screenshotPath = SCREENSHOT_DIR + testCaseId + ".png";
 
+        // Launch PCOMM with macro
         ProcessBuilder pb = new ProcessBuilder(
-                cscript32,
-                "//NoLogo",
-                COMBINED_VB_SCRIPT,
-                MACRO_PATH,
-                snapshotPath
+                PCOMM_EXE,
+                SESSION_FILE,
+                "/R",
+                MACRO_FILE,
+                screenshotPath // pass screenshot path as macro argument if needed
         );
+
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
+        // Capture console output (optional, for debugging)
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                System.out.println("[VBScript] " + line);
+                System.out.println("[PCOMM] " + line);
             }
         }
 
         int exitCode = process.waitFor();
         if (exitCode != 0) {
-            throw new RuntimeException("Macro + Snapshot script failed with exit code " + exitCode);
+            throw new RuntimeException("Macro execution failed with exit code " + exitCode);
         }
 
-        System.out.println("Macro executed and snapshot saved: " + snapshotPath);
+        System.out.println("Macro executed successfully. Screenshot saved at: " + screenshotPath);
+        return screenshotPath;
     }
 }
