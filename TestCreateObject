@@ -1,0 +1,18 @@
+' TestCreateObject.vbs
+On Error Resume Next
+WScript.Echo "Script host: " & WScript.FullName
+
+Dim obj
+Set obj = CreateObject("PCOMM.autECLPS")
+If Err.Number <> 0 Then
+  WScript.Echo "CreateObject failed: " & Err.Number & " - " & Err.Description
+  WScript.Quit 1
+End If
+
+WScript.Echo "autECLPS created OK."
+WScript.Echo "SessionCount = " & obj.SessionCount
+
+Dim i
+For i = 1 To obj.SessionCount
+  WScript.Echo "Session(" & i & ") = " & obj.GetSessionName(i)
+Next
