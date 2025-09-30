@@ -2,8 +2,35 @@
 Dim autECLPSObj
 Set autECLPSObj = CreateObject("PCOMM.autECLPS")
 
-' Set your mainframe session name
-autECLPSObj.SetConnectionByName("A")
+' Your session name (from PCOMM session list)
+Dim sessionName
+sessionName = "A"
+
+' Check if session exists
+Dim sessionExists
+sessionExists = False
+
+Dim i
+For i = 1 To autECLPSObj.SessionCount
+    If autECLPSObj.GetSessionName(i) = sessionName Then
+        sessionExists = True
+        Exit For
+    End If
+Next
+
+' If session does not exist, open it automatically
+If Not sessionExists Then
+    WScript.Echo "Session '" & sessionName & "' not found. Opening session..."
+    ' Provide full path to the .ws or session file
+    Dim sessionFile
+    sessionFile = "C:\Program Files (x86)\IBM\Personal Communications\Sessions\A.ws"  
+    autECLPSObj.StartSession sessionFile
+    ' Give it a few seconds to fully load
+    WScript.Sleep 5000
+End If
+
+' Attach to the session
+autECLPSObj.SetConnectionByName sessionName
 
 ' Arguments from Java
 Dim macroPath, snapshotPath
@@ -15,3 +42,5 @@ autECLPSObj.RunMacro macroPath
 
 ' Step 2: Take Screenshot
 autECLPSObj.PrintScreenToFile snapshotPath
+
+WScript.Echo "Macro executed and snapshot saved successfully."
