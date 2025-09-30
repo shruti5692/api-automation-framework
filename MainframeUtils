@@ -10,7 +10,7 @@ public class MainframeUtils {
     private static final String SNAPSHOT_DIR = "src\\test\\resources\\";
 
     /**
-     * Runs the macro and takes a screenshot in one go.
+     * Runs the macro and takes a snapshot in one go using 32-bit cscript.exe.
      *
      * @param testCaseId Unique ID of the test case
      * @throws Exception if execution fails
@@ -18,8 +18,11 @@ public class MainframeUtils {
     public static void runMacroAndTakeSnapshot(String testCaseId) throws Exception {
         String snapshotPath = SNAPSHOT_DIR + testCaseId + ".png";
 
+        // Use 32-bit cscript.exe from SysWOW64
+        String cscript32 = "C:\\Windows\\SysWOW64\\cscript.exe";
+
         ProcessBuilder pb = new ProcessBuilder(
-                "cscript.exe",
+                cscript32,
                 "//NoLogo",
                 COMBINED_VB_SCRIPT,
                 MACRO_PATH,
@@ -28,6 +31,7 @@ public class MainframeUtils {
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
+        // Read VBScript output
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
