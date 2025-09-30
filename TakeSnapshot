@@ -1,13 +1,17 @@
-' TakeSnapshot.vbs
+' RunMacroAndSnapshot.vbs
 Dim autECLPSObj
 Set autECLPSObj = CreateObject("PCOMM.autECLPS")
 
-' Pick connection name (usually "A", "B", etc from PCOMM session title)
+' Set your mainframe session name
 autECLPSObj.SetConnectionByName("A")
 
-' Path will be passed as argument from Java
-Dim filePath
-filePath = Wscript.Arguments.Item(0)
+' Arguments from Java
+Dim macroPath, snapshotPath
+macroPath = WScript.Arguments.Item(0)
+snapshotPath = WScript.Arguments.Item(1)
 
-' Take snapshot
-autECLPSObj.PrintScreenToFile filePath
+' Step 1: Run Macro
+autECLPSObj.RunMacro macroPath
+
+' Step 2: Take Screenshot
+autECLPSObj.PrintScreenToFile snapshotPath
