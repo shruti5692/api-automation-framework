@@ -4,25 +4,42 @@ import java.io.*;
 
 public class MainframeUtils {
 
-    public static void takeSnapshot(String testCaseId) throws Exception {
-        String filePath = "C:\\Snapshots\\" + testCaseId + ".png";
-        String scriptPath = "C:\\Automation\\TakeSnapshot.vbs";
+    // Paths to combined VBScript and macro
+    private static final String COMBINED_VB_SCRIPT = "C:\\Automation\\RunMacroAndSnapshot.vbs";
+    private static final String MACRO_PATH = "src\\test\\resources\\DBSNAPSHOT.mac";
+    private static final String SNAPSHOT_DIR = "src\\test\\resources\\";
 
-        ProcessBuilder pb = new ProcessBuilder("cscript.exe", scriptPath, filePath);
+    /**
+     * Runs the macro and takes a screenshot in one go.
+     *
+     * @param testCaseId Unique ID of the test case
+     * @throws Exception if execution fails
+     */
+    public static void runMacroAndTakeSnapshot(String testCaseId) throws Exception {
+        String snapshotPath = SNAPSHOT_DIR + testCaseId + ".png";
+
+        ProcessBuilder pb = new ProcessBuilder(
+                "cscript.exe",
+                "//NoLogo",
+                COMBINED_VB_SCRIPT,
+                MACRO_PATH,
+                snapshotPath
+        );
         pb.redirectErrorStream(true);
-        Process p = pb.start();
+        Process process = pb.start();
 
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
-            while ((line = br.readLine()) != null) {
+            while ((line = reader.readLine()) != null) {
                 System.out.println("[VBScript] " + line);
             }
         }
-        int exitCode = p.waitFor();
-        if (exitCode == 0) {
-            System.out.println("Snapshot saved: " + filePath);
-        } else {
-            throw new RuntimeException("Snapshot script failed with exit code " + exitCode);
+
+        int exitCode = process.waitFor();
+        if (exitCode != 0) {
+            throw new RuntimeException("Macro + Snapshot script failed with exit code " + exitCode);
         }
+
+        System.out.println("Macro executed and snapshot saved: " + snapshotPath);
     }
 }
