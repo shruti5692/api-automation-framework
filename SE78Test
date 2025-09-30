@@ -15,6 +15,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     // ----- DB Fetch (if required) -----
     String dbOpenStatus = "UNKNOWN", dbFormStatus = "", dbCycCnt = "";
     boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
+    String screenshotPath = null; // Path to mainframe screenshot
 
     if (isDbRequired && !chargeId.isEmpty()) {
         logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
@@ -25,9 +26,19 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
                 dbOpenStatus = chargeData.getOrDefault("OPEN_CLO_STA", "UNKNOWN");
                 dbFormStatus = chargeData.getOrDefault("CHG_FORM_STA", "");
                 dbCycCnt     = chargeData.getOrDefault("CYC_CNT",
-                               chargeData.getOrDefault("ACYC_CNT", ""));
+                                   chargeData.getOrDefault("ACYC_CNT", ""));
                 logBoth("DB Parsed: OPEN_CLO_STA='" + dbOpenStatus +
                         "', FormStatus='" + dbFormStatus + "', CYC_CNT='" + dbCycCnt + "'");
+
+                // ------------------- Capture Mainframe Screenshot ------------------- //
+                try {
+                    screenshotPath = MainframeUtils.captureDbEvidence(testId);
+                    logBoth("Mainframe screenshot saved at: " + screenshotPath);
+                } catch (Exception e) {
+                    logBoth("[WARN] Unable to capture mainframe screenshot: " + e.getMessage());
+                }
+                // -------------------------------------------------------------------- //
+
             } else {
                 logBoth("[WARN] ChargeID not found in DB");
             }
@@ -63,7 +74,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
     // ----- API Call -----
     String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
-    String url = Config.get("base.url") +  // read base from config.properties
+    String url = Config.get("base.url") +
                  "/v1/securities/" + safeCharge + "/chargedtl";
     logBoth("Step: Calling SE78 API with URL: " + url);
 
@@ -130,6 +141,11 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         }
     }
 
+    // ----- Attach screenshot to report if captured -----
+    if (screenshotPath != null) {
+        Reporter.attachScreenshot(screenshotPath); // replace with your reporting method
+    }
+
     // ----- Test Result & Duration -----
     long durationSec = (System.currentTimeMillis() - startTime) / 1000;
     if (pass) {
@@ -138,7 +154,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         logFail("Field validation failed for " + testId + " Reason: " + failReason);
     }
 
-    // Write both result and execution time to Excel
+    // Write result & duration to Excel
     ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME,
             testId,
             pass ? "PASS" : "FAIL: " + failReason,
