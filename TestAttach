@@ -14,8 +14,12 @@ WScript.Echo "Attaching to session: " & sessionName
 Set psObj = CreateObject("PCOMM.autECLPS")
 psObj.SetConnectionByName sessionName
 
-' Copy entire screen text (not bitmap yet)
-Dim screenText
-screenText = psObj.GetText(1,1,24,80)  ' row1,col1 to row24,col80
-WScript.Echo "Screen text snapshot:"
-WScript.Echo screenText
+' Wait for the session to be available
+WScript.Sleep 2000  ' 2 seconds delay
+psObj.WaitForAppAvailable
+psObj.WaitForScreenReady
+
+' Try capturing the first line only
+Dim line1
+line1 = psObj.GetText(1,1,1,80)
+WScript.Echo "First line: [" & line1 & "]"
