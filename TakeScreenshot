@@ -1,0 +1,16 @@
+' TakeScreenshot.vbs
+Dim psObj, sessionName
+Set psObj = CreateObject("PCOMM.autECLPS")
+
+' Adjust session name exactly as in connList
+sessionName = "A"
+psObj.SetConnectionByName sessionName
+
+' Output path passed from command line
+Dim filePath
+filePath = WScript.Arguments.Item(0)
+
+' Take screenshot
+psObj.PrintScreenToFile filePath
+
+WScript.Echo "Screenshot saved to: " & filePath
