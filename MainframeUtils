@@ -1,0 +1,28 @@
+package com.framework.utils;
+
+import java.io.*;
+
+public class MainframeUtils {
+
+    public static void takeSnapshot(String testCaseId) throws Exception {
+        String filePath = "C:\\Snapshots\\" + testCaseId + ".png";
+        String scriptPath = "C:\\Automation\\TakeSnapshot.vbs";
+
+        ProcessBuilder pb = new ProcessBuilder("cscript.exe", scriptPath, filePath);
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                System.out.println("[VBScript] " + line);
+            }
+        }
+        int exitCode = p.waitFor();
+        if (exitCode == 0) {
+            System.out.println("Snapshot saved: " + filePath);
+        } else {
+            throw new RuntimeException("Snapshot script failed with exit code " + exitCode);
+        }
+    }
+}
