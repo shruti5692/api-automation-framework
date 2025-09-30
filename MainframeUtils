@@ -4,21 +4,13 @@ import java.io.*;
 
 public class MainframeUtils {
 
-    // Paths to combined VBScript and macro
     private static final String COMBINED_VB_SCRIPT = "C:\\Automation\\RunMacroAndSnapshot.vbs";
     private static final String MACRO_PATH = "src\\test\\resources\\DBSNAPSHOT.mac";
     private static final String SNAPSHOT_DIR = "src\\test\\resources\\";
 
-    /**
-     * Runs the macro and takes a snapshot in one go using 32-bit cscript.exe.
-     *
-     * @param testCaseId Unique ID of the test case
-     * @throws Exception if execution fails
-     */
     public static void runMacroAndTakeSnapshot(String testCaseId) throws Exception {
         String snapshotPath = SNAPSHOT_DIR + testCaseId + ".png";
 
-        // Use 32-bit cscript.exe from SysWOW64
         String cscript32 = "C:\\Windows\\SysWOW64\\cscript.exe";
 
         ProcessBuilder pb = new ProcessBuilder(
@@ -31,7 +23,6 @@ public class MainframeUtils {
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
-        // Read VBScript output
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
