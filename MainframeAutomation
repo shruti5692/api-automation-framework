@@ -2,41 +2,64 @@ import org.j3270.Session;
 
 public class MainframeAutomation {
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
+        Session session = null;
+        try {
+            String hostPort = "mainframe-host:port";
+            String username = "YOUR_USERNAME";
+            String password = "YOUR_PASSWORD";
 
-        // Connect to host:port (replace with your mainframe host and port)
-        Session session = new Session("mainframe-host:port");
+            session = new Session(hostPort);
+            session.connect();
 
-        session.connect();
+            // Wait until screen is ready
+            waitForScreen(session, 10); // wait up to 10 seconds
 
-        // Wait until screen is ready
-        session.waitForUnlock();
+            // Send username
+            sendWithWait(session, username);
 
-        // Send Username
-        session.send("YOUR_USERNAME");
+            // Send password
+            sendWithWait(session, password);
+
+            // Navigate / run command
+            sendWithWait(session, "QMF");
+
+            // Run SQL query
+            String query = "SELECT A.CHG_ID, A.CHG_FORM_STA, A.CYC_CNT, B.OPEN_CLO_STA " +
+                           "FROM INTST02.SEC_CHARGE AS A, INTST02.CUD_PROD_RELN AS B " +
+                           "WHERE A.CHG_ID = B.PROD_ID AND A.CHG_ID='SC0000000116'";
+            sendWithWait(session, query);
+
+            // Capture screen output
+            String screenOutput = session.getScreen();
+            System.out.println("Screen output:\n" + screenOutput);
+
+        } catch (Exception e) {
+            System.err.println("Error during mainframe automation:");
+            e.printStackTrace();
+        } finally {
+            if (session != null) {
+                session.disconnect();
+            }
+        }
+    }
+
+    // Helper method: send command and wait for screen unlock
+    private static void sendWithWait(Session session, String command) throws Exception {
+        session.send(command);
         session.sendEnter();
-        session.waitForUnlock();
+        waitForScreen(session, 10); // wait up to 10 seconds
+    }
 
-        // Send Password
-        session.send("YOUR_PASSWORD");
-        session.sendEnter();
-        session.waitForUnlock();
-
-        // Navigate further (example: go to QMF)
-        session.send("QMF");
-        session.sendEnter();
-        session.waitForUnlock();
-
-        // Run an SQL command
-        session.send("SELECT * FROM INTST02.SEC_CHARGE WHERE CHG_ID='SC0000000116'");
-        session.sendEnter();
-        session.waitForUnlock();
-
-        // Capture the current screen
-        String screen = session.getScreen();
-        System.out.println("Screen output:\n" + screen);
-
-        // Disconnect
-        session.disconnect();
+    // Helper method: dynamic wait for screen unlock
+    private static void waitForScreen(Session session, int maxSeconds) throws Exception {
+        int waited = 0;
+        while (!session.isUnlocked() && waited < maxSeconds * 1000) {
+            Thread.sleep(500); // check every 0.5 sec
+            waited += 500;
+        }
+        if (!session.isUnlocked()) {
+            throw new Exception("Screen did not unlock within " + maxSeconds + " seconds");
+        }
     }
 }
