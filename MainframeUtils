@@ -1,33 +1,64 @@
-public static String captureDbEvidence(String testCaseId) throws Exception {
-    Path dir = Paths.get(SCREENSHOT_DIR).toAbsolutePath();
-    if (!Files.exists(dir)) {
-        Files.createDirectories(dir);
-    }
+package com.framework.utils;
 
-    // Screenshot file produced by macro
-    String screenshotPath = dir.resolve(testCaseId + ".bmp").toString();
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
-    ProcessBuilder pb = new ProcessBuilder(
-            PCOMM_EXE,
-            SESSION_FILE,
-            "/R",
-            MACRO_FILE
-    );
-    pb.redirectErrorStream(true);
+public class MainframeUtils {
 
-    Process process = pb.start();
-    try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-        String line;
-        while ((line = reader.readLine()) != null) {
-            System.out.println("[PCOMM] " + line);
+    // Path to pcsws.exe (stays same, only this is inside Program Files)
+    private static final String PCOMM_EXE = "C:\\Program Files (x86)\\IBM\\Personal Communications\\pcsws.exe";
+
+    // Your session file (.ws) saved on Desktop
+    private static final String SESSION_FILE = "C:\\Users\\45453759\\Desktop\\SessionA.ws";
+
+    // Your macro file (.mac) saved inside project resources
+    private static final String MACRO_FILE = "C:\\Users\\45453759\\IdeaProjects\\api-automation-framework\\src\\test\\resources\\DBSnapshotMacro.mac";
+
+    // Where to save screenshots
+    private static final String SCREENSHOT_DIR = "C:\\Users\\45453759\\IdeaProjects\\api-automation-framework\\src\\test\\resources\\screenshots\\";
+
+    /**
+     * Runs the macro to navigate to DB screen and save screenshot.
+     * Returns the full path of the screenshot for reporting.
+     */
+    public static String captureDbEvidence(String testCaseId) throws Exception {
+        // Ensure screenshot directory exists
+        Path dir = Paths.get(SCREENSHOT_DIR);
+        if (!Files.exists(dir)) {
+            Files.createDirectories(dir);
         }
-    }
 
-    int exitCode = process.waitFor();
-    if (exitCode != 0) {
-        throw new RuntimeException("Macro execution failed with exit code " + exitCode);
-    }
+        // Prepare output file path
+        String screenshotPath = SCREENSHOT_DIR + testCaseId + ".png";
 
-    System.out.println("Macro executed successfully. Screenshot expected at: " + screenshotPath);
-    return screenshotPath;
+        // Build command: pcsws.exe <session.ws> /R <macro.mac>
+        ProcessBuilder pb = new ProcessBuilder(
+                PCOMM_EXE,
+                SESSION_FILE,
+                "/R",
+                MACRO_FILE
+        );
+
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        // Debug output
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                System.out.println("[PCOMM] " + line);
+            }
+        }
+
+        int exitCode = process.waitFor();
+        if (exitCode != 0) {
+            throw new RuntimeException("Macro execution failed with exit code " + exitCode);
+        }
+
+        System.out.println("Macro executed successfully. (Screenshot placeholder: " + screenshotPath + ")");
+        return screenshotPath;
+    }
 }
