@@ -6,7 +6,6 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
     String testId       = row.getOrDefault("TestCaseID", "").trim();
     String chargeId     = row.getOrDefault("ChargeID", "").trim();
-    String headers      = row.getOrDefault("Headers", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
     String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim();
 
@@ -53,23 +52,33 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     logBoth("Step: Preparing HTTP headers for API call");
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
-    boolean trustTokenPresent = false;
 
-    if (!headers.isBlank()) {
-        JSONObject headerObj = new JSONObject(headers);
-        for (Iterator<String> it = headerObj.keys(); it.hasNext();) {
-            String k = it.next();
-            String v = headerObj.optString(k, "");
-            if (v.contains("{TRUST_TOKEN}")) v = v.replace("{TRUST_TOKEN}", jwt);
-            if (k.equalsIgnoreCase("X-HSBC-E2E-Trust-Token") ||
-                k.equalsIgnoreCase("X-HSBC-TRUST-TOKEN")) trustTokenPresent = true;
-            headerBuilder.add(k, v);
-            logBoth("Header added: " + k + "=" + v);
-        }
-    }
-    if (!trustTokenPresent) {
-        headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
-        logBoth("Header added: X-HSBC-E2E-Trust-Token=" + jwt);
+    // ✅ Static headers for this API (hardcoded)
+    headerBuilder.add("Cookie", "LtpaToken2-...");
+    headerBuilder.add("Authorization", "Basic VEFWR05BOmdpcmkxOTg5");
+    headerBuilder.add("Content-Type", "application/json");
+    headerBuilder.add("X-HSBC-Channel-Id", "OHB");
+    headerBuilder.add("X-HSBC-Chnl-Country", "1");
+    headerBuilder.add("X-HSBC-Chnl-Group-Member", "HBEU");
+    headerBuilder.add("X-HSBC-Consumer-Id", "1");
+    headerBuilder.add("X-HSBC-GBGF", "1");
+    headerBuilder.add("X-HSBC-Global-Channel-Id", "1");
+    headerBuilder.add("X-HSBC-IP-Id", "136.46.24.54");
+    headerBuilder.add("X-HSBC-Request-Correlation-Id", "123498");
+    headerBuilder.add("X-HSBC-Session-Correlation-Id", "Girisute");
+    headerBuilder.add("X-HSBC-Sort-Code", "400788");
+    headerBuilder.add("X-HSBC-Src-Device-Id", "1234");
+    headerBuilder.add("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)");
+    headerBuilder.add("X-HSBC-User-Id", "43998226");
+    headerBuilder.add("X-HSBC-Locale", "1");
+
+    // ✅ Dynamic JWT header
+    headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
+
+    // Log all headers for traceability
+    Headers headersObj = headerBuilder.build();
+    for (String name : headersObj.names()) {
+        logBoth("Header added: " + name + "=" + headersObj.get(name));
     }
 
     // ----- API Call -----
@@ -82,7 +91,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String body;
     JSONObject responseJson;
     try (Response resp = client.newCall(
-            new Request.Builder().url(url).headers(headerBuilder.build()).get().build()
+            new Request.Builder().url(url).headers(headersObj).get().build()
     ).execute()) {
         status = resp.code();
         body   = resp.body() == null ? "" : resp.body().string();
