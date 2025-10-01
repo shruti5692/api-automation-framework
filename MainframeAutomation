@@ -1,0 +1,42 @@
+import org.j3270.Session;
+
+public class MainframeAutomation {
+
+    public static void main(String[] args) throws Exception {
+
+        // Connect to host:port (replace with your mainframe host and port)
+        Session session = new Session("mainframe-host:port");
+
+        session.connect();
+
+        // Wait until screen is ready
+        session.waitForUnlock();
+
+        // Send Username
+        session.send("YOUR_USERNAME");
+        session.sendEnter();
+        session.waitForUnlock();
+
+        // Send Password
+        session.send("YOUR_PASSWORD");
+        session.sendEnter();
+        session.waitForUnlock();
+
+        // Navigate further (example: go to QMF)
+        session.send("QMF");
+        session.sendEnter();
+        session.waitForUnlock();
+
+        // Run an SQL command
+        session.send("SELECT * FROM INTST02.SEC_CHARGE WHERE CHG_ID='SC0000000116'");
+        session.sendEnter();
+        session.waitForUnlock();
+
+        // Capture the current screen
+        String screen = session.getScreen();
+        System.out.println("Screen output:\n" + screen);
+
+        // Disconnect
+        session.disconnect();
+    }
+}
