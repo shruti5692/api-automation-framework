@@ -8,101 +8,46 @@ import java.util.concurrent.TimeUnit;
 
 public class MainframeUtils {
 
-    private static final String PCOMM_EXE   = "C:\\Program Files (x86)\\IBM\\Personal Communications\\pcsws.exe";
+    private static final String PCOMM_EXE = "C:\\Program Files (x86)\\IBM\\Personal Communications\\pcsws.exe";
     private static final String SESSION_FILE = "C:\\Users\\45453759\\Desktop\\SessionA.ws";
     private static final String MACRO_FILE   = "C:\\Users\\45453759\\IdeaProjects\\api-automation-framework\\src\\test\\resources\\DBSnapshotMacro.mac";
 
-    /**
-     * Run macro with dynamic CHG_ID, close session, and delete temp macro.
-     */
     public static void captureDbEvidence(String chgId) throws Exception {
-
         // 1️⃣ Read original macro
         String macroContent = Files.readString(Paths.get(MACRO_FILE));
-        System.out.println("=== Original Macro Content ===");
-        System.out.println(macroContent);
 
-        // 2️⃣ Replace CHG_ID dynamically
-        macroContent = macroContent.replaceAll(
-                "(?<=A\\.CHG_ID=')[^']+",
-                chgId
-        );
+        // 2️⃣ Replace CHG_ID
+        macroContent = macroContent.replaceAll("(?<=A\\.CHG_ID=')[^']+", chgId);
 
-        System.out.println("=== Temp Macro After Replacement ===");
-        System.out.println(macroContent);
-
-        // 3️⃣ Create a unique temp macro
+        // 3️⃣ Write temp macro
         Path tempMacro = Paths.get(System.getProperty("java.io.tmpdir"),
                 "temp_macro_" + UUID.randomUUID() + ".mac");
         Files.writeString(tempMacro, macroContent);
 
-        System.out.println("Temp macro created at: " + tempMacro);
+        // 4️⃣ Run macro
+        run("\"" + PCOMM_EXE + "\" \"" + SESSION_FILE + "\" /R:\"" + tempMacro + "\"");
 
-        // 4️⃣ Run session with temp macro
-        runProcess("\"" + PCOMM_EXE + "\" \"" + SESSION_FILE + "\" /R:\"" + tempMacro + "\"");
+        // 5️⃣ Delete temp macro
+        Files.deleteIfExists(tempMacro);
 
-        // 5️⃣ Cleanup temp macro
-        try {
-            Files.deleteIfExists(tempMacro);
-            System.out.println("Deleted temp macro: " + tempMacro);
-        } catch (Exception e) {
-            System.err.println("WARNING: Could not delete temp macro: " + e.getMessage());
-        }
-
-        // 6️⃣ Close the PCOMM session (so next run doesn’t complain)
-        closeSession();
+        // 6️⃣ Close session
+        run("\"" + PCOMM_EXE + "\" /Q");
     }
 
-    /**
-     * Run an external process with timeout + logging.
-     */
-    private static void runProcess(String cmd) throws Exception {
-        System.out.println("Executing: " + cmd);
-
+    private static void run(String cmd) throws Exception {
         ProcessBuilder pb = new ProcessBuilder("cmd.exe", "/c", cmd);
         pb.redirectErrorStream(true);
-        Process process = pb.start();
+        Process p = pb.start();
 
-        StringBuilder output = new StringBuilder();
-        Thread outputReader = new Thread(() -> {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    System.out.println("[PCOMM] " + line);
-                    output.append(line).append("\n");
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-        outputReader.start();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+            String line;
+            while ((line = r.readLine()) != null) System.out.println("[PCOMM] " + line);
+        }
 
-        boolean finished = process.waitFor(120, TimeUnit.SECONDS);
-        if (!finished) {
-            process.destroyForcibly();
+        if (!p.waitFor(120, TimeUnit.SECONDS)) {
+            p.destroyForcibly();
             throw new RuntimeException("Command timed out: " + cmd);
         }
-
-        outputReader.join(5000);
-        int exitCode = process.exitValue();
-
-        if (exitCode != 0) {
-            System.err.println("Process failed: " + cmd);
-            System.err.println("Output: " + output);
-            throw new RuntimeException("Process exit code: " + exitCode);
-        }
-    }
-
-    /**
-     * Kill PCOMM session cleanly after macro run.
-     */
-    private static void closeSession() throws Exception {
-        System.out.println("Closing PCOMM session...");
-
-        // pcsws.exe /Q closes all PCOMM sessions
-        String closeCmd = "\"" + PCOMM_EXE + "\" /Q";
-        runProcess(closeCmd);
-
-        System.out.println("PCOMM session closed.");
+        if (p.exitValue() != 0) throw new RuntimeException("Process failed with exit code " + p.exitValue());
     }
 }
