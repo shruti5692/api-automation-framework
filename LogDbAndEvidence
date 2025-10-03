@@ -1,0 +1,52 @@
+public static void logDbAndEvidence(Map<String, String> dbResult, String filePath, String testId) {
+    ExtentTest test = ExtentManager.getTest();
+    if (test == null) {
+        System.out.println("No active test found for Extent logging.");
+        return;
+    }
+
+    StringBuilder block = new StringBuilder();
+
+    // ---- DB Table Section ----
+    if (dbResult != null && !dbResult.isEmpty()) {
+        block.append("<h4>🔎 DB Results for ").append(testId).append("</h4>")
+             .append("<table border='1' style='border-collapse:collapse;width:70%;'>")
+             .append("<tr style='background-color:#f2f2f2;'><th>Field</th><th>Value</th></tr>");
+
+        for (Map.Entry<String, String> entry : dbResult.entrySet()) {
+            block.append("<tr>")
+                 .append("<td>").append(entry.getKey()).append("</td>")
+                 .append("<td>").append(entry.getValue()).append("</td>")
+                 .append("</tr>");
+        }
+        block.append("</table><br>");
+    }
+
+    // ---- Evidence Section ----
+    if (filePath != null) {
+        if (filePath.toLowerCase().endsWith(".pdf")) {
+            block.append("<h4>📑 Evidence PDF</h4>")
+                 .append("<a href='").append(filePath)
+                 .append("' target='_blank'>Click here to view PDF</a><br>");
+        } else if (filePath.toLowerCase().matches(".*\\.(png|jpg|jpeg|gif)$")) {
+            try {
+                test.info("<h4>📸 Evidence Screenshot</h4>",
+                    MediaEntityBuilder.createScreenCaptureFromPath(filePath).build());
+            } catch (Exception e) {
+                block.append("<p style='color:red;'>⚠️ Unable to attach screenshot: ")
+                     .append(e.getMessage()).append("</p>");
+            }
+        } else {
+            block.append("<h4>📂 Evidence File</h4>")
+                 .append("<a href='").append(filePath)
+                 .append("' target='_blank'>Download File</a><br>");
+        }
+    }
+
+    // Log the whole block (DB + link/thumbnail)
+    if (block.length() > 0) {
+        test.info(block.toString());
+    }
+
+    System.out.println("Evidence logged for testId=" + testId + " at path=" + filePath);
+}
