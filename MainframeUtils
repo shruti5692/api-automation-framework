@@ -2,83 +2,48 @@ package com.framework.utils;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.*;
+import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 public class MainframeUtils {
 
-    // Path to pcsws.exe (stays same, only this is inside Program Files)
     private static final String PCOMM_EXE = "C:\\Program Files (x86)\\IBM\\Personal Communications\\pcsws.exe";
-
-    // Your session file (.ws) saved on Desktop
     private static final String SESSION_FILE = "C:\\Users\\45453759\\Desktop\\SessionA.ws";
-
-    // Your macro file (.mac) saved inside project resources
     private static final String MACRO_FILE = "C:\\Users\\45453759\\IdeaProjects\\api-automation-framework\\src\\test\\resources\\DBSnapshotMacro.mac";
-
-    // Where to save screenshots
     private static final String SCREENSHOT_DIR = "C:\\Users\\45453759\\IdeaProjects\\api-automation-framework\\src\\test\\resources\\screenshots\\";
 
-    /**
-     * Runs the macro to navigate to DB screen and save screenshot.
-     * Creates a temporary macro with dynamic screenshot path.
-     * Returns the full path of the screenshot for reporting.
-     */
     public static String captureDbEvidence(String testCaseId) throws Exception {
-        // Ensure screenshot directory exists
+        // Ensure screenshot dir exists
         Path dir = Paths.get(SCREENSHOT_DIR);
         if (!Files.exists(dir)) {
             Files.createDirectories(dir);
         }
 
-        // Prepare output file path
-        String screenshotPath = SCREENSHOT_DIR + testCaseId + ".png";
-        
-        // Create a temporary macro with dynamic screenshot path
-        String tempMacroPath = SCREENSHOT_DIR + "temp_macro_" + testCaseId + ".mac";
-        String macroContent = Files.readString(Paths.get(MACRO_FILE));
-        
-        // Replace the screenshot path in macro
-        macroContent = macroContent.replace(
-            "DBSnapshot.png", 
-            testCaseId + ".png"
-        );
-        
-        Files.writeString(Paths.get(tempMacroPath), macroContent);
-        String macroToRun = tempMacroPath;
-
         System.out.println("=== Starting PCOMM Macro Execution ===");
         System.out.println("Session File: " + SESSION_FILE);
         System.out.println("Macro File: " + MACRO_FILE);
-        System.out.println("Screenshot will be saved to: " + screenshotPath);
 
-        // Verify files exist before executing
         if (!Files.exists(Paths.get(SESSION_FILE))) {
             throw new RuntimeException("Session file not found: " + SESSION_FILE);
         }
         if (!Files.exists(Paths.get(MACRO_FILE))) {
             throw new RuntimeException("Macro file not found: " + MACRO_FILE);
         }
-        
-        System.out.println("Using macro: " + macroToRun);
         if (!Files.exists(Paths.get(PCOMM_EXE))) {
             throw new RuntimeException("PCOMM executable not found: " + PCOMM_EXE);
         }
 
-        // Build command: pcsws.exe <session.ws> /R:<macro.mac>
-        // IMPORTANT: Use /R: (colon) not /R (space)
+        // Run session with macro
         ProcessBuilder pb = new ProcessBuilder(
                 PCOMM_EXE,
                 SESSION_FILE,
-                "/R:" + macroToRun  // Use temp macro with dynamic path
+                "/R:" + MACRO_FILE
         );
-
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
-        // Read output in separate thread to avoid blocking
         StringBuilder output = new StringBuilder();
         Thread outputReader = new Thread(() -> {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
@@ -93,44 +58,37 @@ public class MainframeUtils {
         });
         outputReader.start();
 
-        // Wait for process with timeout (macros can take time)
-        boolean finished = process.waitFor(120, TimeUnit.SECONDS); // 2 minute timeout
-        
+        boolean finished = process.waitFor(120, TimeUnit.SECONDS);
         if (!finished) {
             process.destroyForcibly();
             throw new RuntimeException("Macro execution timed out after 120 seconds");
         }
-
-        outputReader.join(5000); // Wait for output reader to finish
+        outputReader.join(5000);
 
         int exitCode = process.exitValue();
-        System.out.println("Process exit code: " + exitCode);
-        
         if (exitCode != 0) {
-            System.err.println("PCOMM Output:\n" + output.toString());
             throw new RuntimeException("Macro execution failed with exit code " + exitCode);
         }
 
-        // Wait a bit for screenshot to be saved by the macro
+        // Wait for screenshot to be flushed
         Thread.sleep(2000);
 
-        // Verify screenshot was created
-        if (!Files.exists(Paths.get(screenshotPath))) {
-            System.err.println("WARNING: Screenshot file was not created at: " + screenshotPath);
-            System.err.println("This usually means the macro didn't execute the screenshot command.");
-        } else {
-            System.out.println("Screenshot successfully saved: " + screenshotPath);
+        // Pick the latest screenshot file from directory
+        Path latestScreenshot;
+        try (Stream<Path> files = Files.list(dir)) {
+            latestScreenshot = files
+                    .filter(Files::isRegularFile)
+                    .max(Comparator.comparingLong(f -> f.toFile().lastModified()))
+                    .orElseThrow(() -> new RuntimeException("No screenshot found in dir: " + SCREENSHOT_DIR));
         }
 
+        // Rename/copy to testCaseId.png
+        Path finalPath = Paths.get(SCREENSHOT_DIR, testCaseId + ".png");
+        Files.copy(latestScreenshot, finalPath, StandardCopyOption.REPLACE_EXISTING);
+
+        System.out.println("Screenshot saved: " + finalPath);
+
         System.out.println("=== PCOMM Macro Execution Complete ===");
-        
-        // Clean up temp macro
-        try {
-            Files.deleteIfExists(Paths.get(tempMacroPath));
-        } catch (Exception e) {
-            System.out.println("Note: Could not delete temp macro: " + e.getMessage());
-        }
-        
-        return screenshotPath;
+        return finalPath.toString();
     }
 }
