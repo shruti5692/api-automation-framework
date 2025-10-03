@@ -18,6 +18,14 @@ public void validateCustomerAccounts() throws Exception {
     // ---------------- Build URL ---------------- //
     String url = ConfigManager.get("cust.url") + SENSITIVE_KEY + "/rel-acct?maxAccounts=0004";
 
+    // ---------------- Debug Logging ---------------- //
+    System.out.println("========== DEBUG INFO ==========");
+    System.out.println("JWT (first 50 chars): " + (jwt != null ? jwt.substring(0, Math.min(50, jwt.length())) + "..." : "null"));
+    System.out.println("Customer No        : " + custNo);
+    System.out.println("Final URL          : " + url);
+    System.out.println("Headers Map        : " + headersMap);
+    System.out.println("================================");
+
     // ---------------- Call API ---------------- //
     OkHttpClient client = new OkHttpClient();
     Request.Builder builder = new Request.Builder().url(url).get();
@@ -26,7 +34,8 @@ public void validateCustomerAccounts() throws Exception {
 
     List<Map<String, String>> apiData = new ArrayList<>();
     try (Response response = client.newCall(request).execute()) {
-        Assert.assertEquals(200, response.code());
+        int statusCode = response.code();
+        Assert.assertEquals("Unexpected status code!", 200, statusCode);
 
         String body = response.body() != null ? response.body().string() : "";
         System.out.println("API Response: " + body);
@@ -41,9 +50,9 @@ public void validateCustomerAccounts() throws Exception {
             String prodCode = String.valueOf(acc.get("productCode")).trim();
 
             Map<String, String> record = new HashMap<>();
-            record.put("CUST_NO", custNo);       // aligned with DB column
-            record.put("PROD_ID", prodId);       // aligned with DB column
-            record.put("PROD_COD", prodCode);    // aligned with DB column
+            record.put("CUST_NO", custNo);
+            record.put("PROD_ID", prodId);
+            record.put("PROD_COD", prodCode);
             apiData.add(record);
         }
     }
@@ -55,7 +64,6 @@ public void validateCustomerAccounts() throws Exception {
     System.out.println("DB  : " + dbData);
     System.out.println("API : " + apiData);
 
-    // Instead of strict list equality (order-sensitive), use set equality
     Assert.assertTrue(
         "API and DB results do not match!",
         new HashSet<>(dbData).equals(new HashSet<>(apiData))
