@@ -1,110 +1,96 @@
-MACRO DBSnapshotMacro
+macro DBSnapshotMacro
 
-WAIT APP
-WAIT INP INH
+[wait app]
+[wait inp inh]
+"1003
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 0808 at (1,35)
+wait 10 sec until cursor at (1,36)
 
-SEND "1003<enter>"
-WAIT INP INH
+[wait app]
+[wait inp inh]
+"tbihrt
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 000C at (2,35)
+wait 10 sec until cursor at (2,36)
 
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 0808 AT (1,35)
-WAIT 10 SEC UNTIL CURSOR AT (1,36)
+[wait app]
+[wait inp inh]
+"Shru3197
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 0808 at (3,6)
+wait 4531 msec
 
-WAIT APP
-WAIT INP INH
+[wait app]
+[wait inp inh]
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 0000 at (24,5)
+wait 1 sec
 
-SEND "tbihrt<enter>"
-WAIT INP INH
+[wait app]
+[wait inp inh]
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 8000 at (13,8)
+wait 10 sec until cursor at (14,1)
 
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 000C AT (2,35)
-WAIT 10 SEC UNTIL CURSOR AT (2,36)
+[wait app]
+[wait inp inh]
+"ispf
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 8000 at (4,13)
+wait 10 sec until cursor at (4,14)
 
-WAIT APP
-WAIT INP INH
+[wait app]
+[wait inp inh]
+"m;d;5;1;3;4
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 8000 at (15,67)
+wait 10 sec until cursor at (15,68)
 
-SEND "Shru3197<enter>"
-WAIT INP INH
+[wait app]
+[wait inp inh]
+"toba
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 0868 at (4,14)
+wait 10 sec until cursor at (4,15)
 
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 0808 AT (3,6)
-WAIT 4531 MSEC
+[wait app]
+[wait inp inh]
+"4
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 0000 at (4,14)
+wait 10 sec until cursor at (4,15)
 
-WAIT APP
-WAIT INP INH
+[wait app]
+[wait inp inh]
+"3
+[enter]
+[wait inp inh]
+wait 10 sec until FieldAttribute 8000 at (14,1)
+wait 10 sec until cursor at (14,2)
 
-SEND "<enter>"
-WAIT INP INH
+[wait app]
+[wait inp inh]
+"SELECT A.CHG_ID, A.CHG_FORM_STA, A.CYC_CNT, B.OPEN_CLO_STA FROM INTSTO2.SEC_CHARGE AS A, INTSTO2.COD_PROD_RELA
+[enter]
+[wait inp inh]
 
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 0000 AT (24,5)
-WAIT 1 SEC
+[wait app]
+wait 2 sec
 
-WAIT APP
-WAIT INP INH
+[local copy]
+"C:\Users\45453759\IdeaProjects\api-automation-framework\src\test\resources\screenshots\DBSnapshot.png
 
-SEND "<enter>"
-WAIT INP INH
+wait 2 sec
 
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 8000 AT (13,8)
-WAIT 10 SEC UNTIL CURSOR AT (14,1)
-
-WAIT APP
-WAIT INP INH
-
-SEND "ispf<enter>"
-WAIT INP INH
-
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 8000 AT (4,13)
-WAIT 10 SEC UNTIL CURSOR AT (4,14)
-
-WAIT APP
-WAIT INP INH
-
-SEND "m;d;5;1;3;4<enter>"
-WAIT INP INH
-
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 8000 AT (15,67)
-WAIT 10 SEC UNTIL CURSOR AT (15,68)
-
-WAIT APP
-WAIT INP INH
-
-SEND "toba<enter>"
-WAIT INP INH
-
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 0868 AT (4,14)
-WAIT 10 SEC UNTIL CURSOR AT (4,15)
-
-WAIT APP
-WAIT INP INH
-
-SEND "4<enter>"
-WAIT INP INH
-
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 0000 AT (4,14)
-WAIT 10 SEC UNTIL CURSOR AT (4,15)
-
-WAIT APP
-WAIT INP INH
-
-SEND "3<enter>"
-WAIT INP INH
-
-WAIT 10 SEC UNTIL FIELDATTRIBUTE 8000 AT (14,1)
-WAIT 10 SEC UNTIL CURSOR AT (14,2)
-
-WAIT APP
-WAIT INP INH
-
-SEND "SELECT A.CHG_ID, A.CHG_FORM_STA, A.CYC_CNT, B.OPEN_CLO_STA FROM INTSTO2.SEC_CHARGE AS A, INTSTO2.COD_PROD_RELA<enter>"
-WAIT INP INH
-
-WAIT APP
-
-' Take screenshot and save it
-LOCALCOPY "C:\Users\45453759\IdeaProjects\api-automation-framework\src\test\resources\screenshots\DBSnapshot.png"
-
-WAIT 2 SEC
-
-' Exit or return to main menu
-SEND "<pf3>"
-WAIT 1 SEC
-
-END MACRO
+[pf3]
+wait 1 sec
