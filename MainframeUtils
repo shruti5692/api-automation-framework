@@ -5,6 +5,7 @@ import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.TimeUnit;
 
 public class MainframeUtils {
 
@@ -22,6 +23,7 @@ public class MainframeUtils {
 
     /**
      * Runs the macro to navigate to DB screen and save screenshot.
+     * Creates a temporary macro with dynamic screenshot path.
      * Returns the full path of the screenshot for reporting.
      */
     public static String captureDbEvidence(String testCaseId) throws Exception {
@@ -33,32 +35,102 @@ public class MainframeUtils {
 
         // Prepare output file path
         String screenshotPath = SCREENSHOT_DIR + testCaseId + ".png";
+        
+        // Create a temporary macro with dynamic screenshot path
+        String tempMacroPath = SCREENSHOT_DIR + "temp_macro_" + testCaseId + ".mac";
+        String macroContent = Files.readString(Paths.get(MACRO_FILE));
+        
+        // Replace the screenshot path in macro
+        macroContent = macroContent.replace(
+            "DBSnapshot.png", 
+            testCaseId + ".png"
+        );
+        
+        Files.writeString(Paths.get(tempMacroPath), macroContent);
+        String macroToRun = tempMacroPath;
 
-        // Build command: pcsws.exe <session.ws> /R <macro.mac>
+        System.out.println("=== Starting PCOMM Macro Execution ===");
+        System.out.println("Session File: " + SESSION_FILE);
+        System.out.println("Macro File: " + MACRO_FILE);
+        System.out.println("Screenshot will be saved to: " + screenshotPath);
+
+        // Verify files exist before executing
+        if (!Files.exists(Paths.get(SESSION_FILE))) {
+            throw new RuntimeException("Session file not found: " + SESSION_FILE);
+        }
+        if (!Files.exists(Paths.get(MACRO_FILE))) {
+            throw new RuntimeException("Macro file not found: " + MACRO_FILE);
+        }
+        
+        System.out.println("Using macro: " + macroToRun);
+        if (!Files.exists(Paths.get(PCOMM_EXE))) {
+            throw new RuntimeException("PCOMM executable not found: " + PCOMM_EXE);
+        }
+
+        // Build command: pcsws.exe <session.ws> /R:<macro.mac>
+        // IMPORTANT: Use /R: (colon) not /R (space)
         ProcessBuilder pb = new ProcessBuilder(
                 PCOMM_EXE,
                 SESSION_FILE,
-                "/R",
-                MACRO_FILE
+                "/R:" + macroToRun  // Use temp macro with dynamic path
         );
 
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
-        // Debug output
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                System.out.println("[PCOMM] " + line);
+        // Read output in separate thread to avoid blocking
+        StringBuilder output = new StringBuilder();
+        Thread outputReader = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("[PCOMM] " + line);
+                    output.append(line).append("\n");
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
             }
+        });
+        outputReader.start();
+
+        // Wait for process with timeout (macros can take time)
+        boolean finished = process.waitFor(120, TimeUnit.SECONDS); // 2 minute timeout
+        
+        if (!finished) {
+            process.destroyForcibly();
+            throw new RuntimeException("Macro execution timed out after 120 seconds");
         }
 
-        int exitCode = process.waitFor();
+        outputReader.join(5000); // Wait for output reader to finish
+
+        int exitCode = process.exitValue();
+        System.out.println("Process exit code: " + exitCode);
+        
         if (exitCode != 0) {
+            System.err.println("PCOMM Output:\n" + output.toString());
             throw new RuntimeException("Macro execution failed with exit code " + exitCode);
         }
 
-        System.out.println("Macro executed successfully. (Screenshot placeholder: " + screenshotPath + ")");
+        // Wait a bit for screenshot to be saved by the macro
+        Thread.sleep(2000);
+
+        // Verify screenshot was created
+        if (!Files.exists(Paths.get(screenshotPath))) {
+            System.err.println("WARNING: Screenshot file was not created at: " + screenshotPath);
+            System.err.println("This usually means the macro didn't execute the screenshot command.");
+        } else {
+            System.out.println("Screenshot successfully saved: " + screenshotPath);
+        }
+
+        System.out.println("=== PCOMM Macro Execution Complete ===");
+        
+        // Clean up temp macro
+        try {
+            Files.deleteIfExists(Paths.get(tempMacroPath));
+        } catch (Exception e) {
+            System.out.println("Note: Could not delete temp macro: " + e.getMessage());
+        }
+        
         return screenshotPath;
     }
 }
