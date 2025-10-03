@@ -14,29 +14,25 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     // ----- DB Fetch (if required) -----
     String dbOpenStatus = "UNKNOWN", dbFormStatus = "", dbCycCnt = "";
     boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
-    String screenshotPath = null; // Path to mainframe screenshot
+    String evidencePath = null; // Path to mainframe evidence (PDF or image)
+    Map<String, String> chargeData = null;
 
     if (isDbRequired && !chargeId.isEmpty()) {
         logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
         try {
-            Map<String, String> chargeData = DbFetchHelper.fetchChargeData(chargeId);
+            chargeData = DbFetchHelper.fetchChargeData(chargeId);
             if (chargeData != null && !chargeData.isEmpty()) {
-                logBoth("DB Result (raw): " + chargeData);
                 dbOpenStatus = chargeData.getOrDefault("OPEN_CLO_STA", "UNKNOWN");
                 dbFormStatus = chargeData.getOrDefault("CHG_FORM_STA", "");
                 dbCycCnt     = chargeData.getOrDefault("CYC_CNT",
                                    chargeData.getOrDefault("ACYC_CNT", ""));
-                logBoth("DB Parsed: OPEN_CLO_STA='" + dbOpenStatus +
-                        "', FormStatus='" + dbFormStatus + "', CYC_CNT='" + dbCycCnt + "'");
-
-                // ------------------- Capture Mainframe Screenshot ------------------- //
+                
+                // ------------------- Capture Mainframe Evidence ------------------- //
                 try {
-                    screenshotPath = MainframeUtils.captureDbEvidence(testId);
-                    logBoth("Mainframe screenshot saved at: " + screenshotPath);
+                    evidencePath = MainframeUtils.captureDbEvidence(testId); // returns PDF path or image
                 } catch (Exception e) {
-                    logBoth("[WARN] Unable to capture mainframe screenshot: " + e.getMessage());
+                    logBoth("[WARN] Unable to capture mainframe evidence: " + e.getMessage());
                 }
-                // -------------------------------------------------------------------- //
 
             } else {
                 logBoth("[WARN] ChargeID not found in DB");
@@ -53,7 +49,7 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     String jwt = JwtFetcher.fetchIb2bJwt();
     Headers.Builder headerBuilder = new Headers.Builder();
 
-    // ✅ Static headers for this API (hardcoded)
+    // ✅ Static headers
     headerBuilder.add("Cookie", "LtpaToken2-...");
     headerBuilder.add("Authorization", "Basic VEFWR05BOmdpcmkxOTg5");
     headerBuilder.add("Content-Type", "application/json");
@@ -75,7 +71,6 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
     // ✅ Dynamic JWT header
     headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
 
-    // Log all headers for traceability
     Headers headersObj = headerBuilder.build();
     for (String name : headersObj.names()) {
         logBoth("Header added: " + name + "=" + headersObj.get(name));
@@ -150,10 +145,8 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         }
     }
 
-    // ----- Attach screenshot to report if captured -----
-    if (screenshotPath != null) {
-        Reporter.attachScreenshot(screenshotPath); // replace with your reporting method
-    }
+    // ----- Log Evidence Section (DB table + PDF/Image) -----
+    logDbAndEvidence(chargeData, evidencePath, testId);
 
     // ----- Test Result & Duration -----
     long durationSec = (System.currentTimeMillis() - startTime) / 1000;
