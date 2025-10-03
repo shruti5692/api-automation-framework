@@ -1,39 +1,100 @@
-public static void captureDbEvidence(String chgId) throws Exception {
-    // Read macro into memory
-    String macroContent = Files.readString(Paths.get(MACRO_FILE));
+package com.framework.utils;
 
-    // Replace placeholder <<CHG_ID>> with dynamic value
-    macroContent = macroContent.replace("<<CHG_ID>>", chgId);
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.concurrent.TimeUnit;
 
-    // Write temp macro to run
-    Path tempMacro = Paths.get(SCREENSHOT_DIR, "temp_macro_" + chgId + ".mac");
-    Files.writeString(tempMacro, macroContent);
+public class MainframeUtils {
 
-    // Run macro
-    ProcessBuilder pb = new ProcessBuilder(
-            PCOMM_EXE,
-            SESSION_FILE,
-            "/R:" + tempMacro.toString()
-    );
-    pb.redirectErrorStream(true);
-    Process process = pb.start();
+    private static final String PCOMM_EXE = "C:\\Program Files (x86)\\IBM\\Personal Communications\\pcsws.exe";
+    private static final String SESSION_FILE = "C:\\Users\\45453759\\Desktop\\SessionA.ws";
+    private static final String MACRO_FILE = "C:\\Users\\45453759\\IdeaProjects\\api-automation-framework\\src\\test\\resources\\DBSnapshotMacro.mac";
 
-    // Read output (optional)
-    try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-        String line;
-        while ((line = reader.readLine()) != null) {
-            System.out.println("[PCOMM] " + line);
+    /**
+     * Runs the macro with a dynamic CHG_ID in the SQL query.
+     */
+    public static void captureDbEvidence(String chgId) throws Exception {
+
+        // Read macro
+        String macroContent = Files.readString(Paths.get(MACRO_FILE));
+        System.out.println("=== Original Macro Content ===");
+        System.out.println(macroContent);
+
+        // Replace the CHG_ID dynamically using regex
+        macroContent = macroContent.replaceAll(
+                "(?<=A\\.CHG_ID=')[^']+",   // find whatever is between A.CHG_ID='...'
+                chgId                      // replace with passed ID
+        );
+
+        System.out.println("=== Macro After Replacement ===");
+        System.out.println(macroContent);
+
+        // Write updated macro to a temporary file
+        Path tempMacro = Paths.get(MACRO_FILE).getParent().resolve("temp_macro_" + chgId + ".mac");
+        Files.writeString(tempMacro, macroContent);
+
+        System.out.println("Using session: " + SESSION_FILE);
+        System.out.println("Using macro  : " + tempMacro);
+
+        // Validate executables and files
+        if (!Files.exists(Paths.get(SESSION_FILE))) {
+            throw new RuntimeException("Session file not found: " + SESSION_FILE);
+        }
+        if (!Files.exists(Paths.get(PCOMM_EXE))) {
+            throw new RuntimeException("PCOMM executable not found: " + PCOMM_EXE);
+        }
+
+        // Build command to run Pcomm with session + macro
+        ProcessBuilder pb = new ProcessBuilder(
+                PCOMM_EXE,
+                SESSION_FILE,
+                "/R:" + tempMacro.toString()
+        );
+
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        // Capture process output
+        StringBuilder output = new StringBuilder();
+        Thread outputReader = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("[PCOMM] " + line);
+                    output.append(line).append("\n");
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+        outputReader.start();
+
+        // Wait with timeout
+        boolean finished = process.waitFor(120, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new RuntimeException("Macro execution timed out after 120 seconds");
+        }
+
+        outputReader.join(5000);
+
+        int exitCode = process.exitValue();
+        System.out.println("Process exit code: " + exitCode);
+        if (exitCode != 0) {
+            System.err.println("PCOMM Output:\n" + output);
+            throw new RuntimeException("Macro execution failed with exit code " + exitCode);
+        }
+
+        System.out.println("=== Macro Execution Complete for CHG_ID " + chgId + " ===");
+
+        // Clean up temporary macro
+        try {
+            Files.deleteIfExists(tempMacro);
+        } catch (Exception e) {
+            System.out.println("Note: Could not delete temp macro: " + e.getMessage());
         }
     }
-
-    boolean finished = process.waitFor(120, TimeUnit.SECONDS);
-    if (!finished) {
-        process.destroyForcibly();
-        throw new RuntimeException("Macro execution timed out");
-    }
-
-    // Delete temp macro
-    Files.deleteIfExists(tempMacro);
-
-    System.out.println("Macro executed successfully for CHG_ID: " + chgId);
 }
