@@ -1,26 +1,23 @@
-public static void logDbDataInTable(List<Map<String, String>> dbData, Consumer<String> logger) {
+public static void logDbDataInTable(List<Map<String, String>> dbData, List<String> columnOrder, Consumer<String> logger) {
     if (dbData == null || dbData.isEmpty()) {
         logger.accept("No DB data fetched.");
         return;
     }
 
-    // Extract headers from first row
-    Set<String> headers = dbData.get(0).keySet();
-
     StringBuilder table = new StringBuilder("<table border='1' style='border-collapse: collapse;'>");
-    
+
     // Header row
     table.append("<tr style='background-color: #f2f2f2;'>");
-    for (String h : headers) {
-        table.append("<th>").append(h).append("</th>");
+    for (String col : columnOrder) {
+        table.append("<th>").append(col).append("</th>");
     }
     table.append("</tr>");
 
     // Data rows
     for (Map<String, String> row : dbData) {
         table.append("<tr>");
-        for (String h : headers) {
-            table.append("<td>").append(row.getOrDefault(h, "")).append("</td>");
+        for (String col : columnOrder) {
+            table.append("<td>").append(row.getOrDefault(col, "")).append("</td>");
         }
         table.append("</tr>");
     }
