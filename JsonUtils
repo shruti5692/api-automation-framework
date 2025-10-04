@@ -1,98 +1,179 @@
-package org.framework.utils;
+package tests;
 
-import com.jayway.jsonpath.JsonPath;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import okhttp3.*;
+import org.framework.config.ConfigManager;
+import org.framework.utils.ExcelUtils;
+import org.framework.utils.JwtFetcher;
+import org.framework.utils.MainframeUtils;
+import org.json.JSONObject;
+import org.junit.Assert;
+import org.testng.annotations.Test;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
-/**
- * Utility class for flexible JSON parsing and normalization.
- * Works for both ExpectedFields-style JSON and API response JSONs.
- */
-public class JsonUtils {
+import static tests.DbFetchHelper.fetchData;
+import static org.framework.utils.LoggerUtils.*;
 
-    private static final ObjectMapper mapper = new ObjectMapper();
+public class SE78Test {
 
-    /**
-     * Converts a simple JSON object (like ExpectedFields) into a flat Map<String, String>.
-     * Example: {"applicationId":"SECN7801","correlationId":"123498"} → Map{"applicationId":"SECN7801",...}
-     */
-    public static Map<String, String> jsonToFlatMap(String json) {
-        Map<String, String> flatMap = new HashMap<>();
+    private static final String EXCEL_PATH = ConfigManager.get("excel_path");
+    private static final String SHEET_NAME = "TestCases";
+    private static final Set<String> DB_REQUIRED_TESTS = Set.of("TC02_ValidChargeID", "TC03_ClosedChargeID");
+    private static final String CHARGE_QUERY = "SELECT OPEN_CLO_STA, CHG_FORM_STA, CYC_CNT, ACYC_CNT FROM INTST02.SEC_CHARGE WHERE CHG_ID = ?";
 
-        if (json == null || json.isBlank()) return flatMap;
+    private final OkHttpClient client = new OkHttpClient();
 
-        try {
-            JsonNode root = mapper.readTree(json);
-            flattenJson("", root, flatMap);
-        } catch (Exception e) {
-            System.err.println("⚠️ Error in jsonToFlatMap: " + e.getMessage());
-        }
+    @Test(dataProvider = "se78Data")
+    public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
-        return flatMap;
-    }
+        long startTime = System.currentTimeMillis();
+        String testId = row.getOrDefault("TestCaseID", "").trim();
+        String chargeId = row.getOrDefault("ChargeID", "").trim();
+        String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
+        String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim();
 
-    /**
-     * Converts a JSON response into a List of flat maps.
-     * It can handle arrays and nested objects gracefully.
-     * Example:
-     * {
-     *   "errorResponse": {
-     *     "errorResponseDetails": {
-     *       "errorInfo": [ { "applicationId":"SECN7801" } ]
-     *     }
-     *   }
-     * }
-     * becomes → List of Map { "applicationId":"SECN7801" }
-     */
-    public static List<Map<String, String>> jsonToListOfMaps(String json) {
-        List<Map<String, String>> list = new ArrayList<>();
+        logBoth("Running SE78 test: " + testId + " (ChargeID=" + chargeId + ")");
 
-        if (json == null || json.isBlank()) return list;
+        boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
+        List<Map<String, String>> chargeData = null;
 
-        try {
-            Object document = JsonPath.parse(json).json();
-            JsonNode root = mapper.readTree(mapper.writeValueAsString(document));
-
-            if (root.isArray()) {
-                for (JsonNode node : root) {
-                    Map<String, String> flat = new HashMap<>();
-                    flattenJson("", node, flat);
-                    list.add(flat);
+        // ========== DB FETCH ==========
+        if (isDbRequired && !chargeId.isEmpty()) {
+            logBoth("Step: Fetching DB data for ChargeID " + chargeId);
+            try {
+                chargeData = fetchData(CHARGE_QUERY, chargeId);
+                if (chargeData == null || chargeData.isEmpty()) {
+                    logWarn("ChargeID not found in DB");
+                } else {
+                    logBoth("DB Data: " + chargeData);
                 }
-            } else {
-                Map<String, String> flat = new HashMap<>();
-                flattenJson("", root, flat);
-                list.add(flat);
+            } catch (Exception e) {
+                logError("Exception while fetching DB data: " + e.getMessage());
             }
-        } catch (Exception e) {
-            System.err.println("⚠️ Error in jsonToListOfMaps: " + e.getMessage());
+        } else {
+            logBoth("DB fetch skipped for this test case");
         }
 
-        return list;
-    }
+        // ========== HEADERS & JWT ==========
+        logBoth("Step: Preparing HTTP headers for API call");
+        String jwt = JwtFetcher.fetchIb2bJwt();
 
-    /**
-     * Recursively flattens JSON structure into key-value pairs.
-     * Example: {"a":{"b":"c"}} → {"a.b":"c"}
-     */
-    private static void flattenJson(String prefix, JsonNode node, Map<String, String> result) {
-        if (node.isObject()) {
-            node.fieldNames().forEachRemaining(field -> {
-                JsonNode child = node.get(field);
-                String newKey = prefix.isEmpty() ? field : prefix + "." + field;
-                flattenJson(newKey, child, result);
-            });
-        } else if (node.isArray()) {
-            int index = 0;
-            for (JsonNode item : node) {
-                String newKey = prefix + "[" + index + "]";
-                flattenJson(newKey, item, result);
-                index++;
+        Headers.Builder headerBuilder = new Headers.Builder();
+        headerBuilder.add("Content-Type", "application/json");
+        headerBuilder.add("X-HSBC-Channel-Id", "OHB");
+        headerBuilder.add("X-HSBC-Request-Correlation-Id", "123498");
+        headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
+        headerBuilder.add("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)");
+        headerBuilder.add("X-HSBC-User-Id", "43998226");
+
+        Headers headersObj = headerBuilder.build();
+        headersObj.names().forEach(name -> logBoth("Header added: " + name + " = " + headersObj.get(name)));
+
+        // ========== API CALL ==========
+        String url = ConfigManager.get("se78.url") + chargeId + "/chargedtl";
+        logBoth("Step: Calling SE78 API with URL: " + url);
+
+        int status;
+        String body;
+
+        Request request = new Request.Builder()
+                .url(url)
+                .headers(headersObj)
+                .get()
+                .build();
+
+        try (Response resp = client.newCall(request).execute()) {
+            status = resp.code();
+            body = resp.body() != null ? resp.body().string() : "";
+        }
+
+        logBoth("HTTP Status: " + status);
+        logBoth("Response Body (truncated): " + body.substring(0, Math.min(body.length(), 500)));
+
+        // ========== STATUS VALIDATION ==========
+        if (!expStatusStr.isBlank()) {
+            int expStatus = Integer.parseInt(expStatusStr);
+            Assert.assertEquals("Unexpected HTTP status for test " + testId, expStatus, status);
+            logPass("Expected HTTP status matched: " + expStatus);
+        }
+
+        // ========== FIELD-WISE VALIDATION ==========
+        boolean pass = true;
+        StringBuilder failReasons = new StringBuilder();
+
+        if (isDbRequired && chargeData != null && !chargeData.isEmpty()) {
+            // Compare API vs DB data
+            logBoth("Step: Performing DB field-wise validation");
+            Map<String, String> dbRow = chargeData.get(0);
+            Map<String, String> apiMap = JsonFlattener.jsonToFlatMap(new JSONObject(body));
+
+            for (Map.Entry<String, String> dbEntry : dbRow.entrySet()) {
+                String field = dbEntry.getKey();
+                String expected = dbEntry.getValue();
+
+                Optional<Map.Entry<String, String>> match = apiMap.entrySet().stream()
+                        .filter(e -> e.getKey().replaceAll("\\[\\d+\\]", "")
+                                .toLowerCase().endsWith(field.toLowerCase()))
+                        .findFirst();
+
+                String actual = match.map(Map.Entry::getValue).orElse("null");
+
+                logBoth(String.format(
+                        "Field Validation -> Field: %-25s | Expected: %-20s | Actual: %-20s",
+                        field, expected, actual
+                ));
+
+                if (!expected.equalsIgnoreCase(actual)) {
+                    failReasons.append(String.format(
+                            "\nField '%s' mismatch. Expected: %s, Actual: %s",
+                            field, expected, actual
+                    ));
+                    pass = false;
+                }
             }
-        } else if (node.isValueNode()) {
-            result.put(prefix, node.asText().trim());
+
+        } else if (!expectedFieldsJson.isBlank()) {
+            // Compare API vs ExpectedFields from Excel
+            logBoth("Step: Performing dynamic field-wise validation using Excel fields");
+
+            Map<String, String> expectedFields = ExcelUtils.jsonToMap(expectedFieldsJson);
+            Map<String, String> apiMap = JsonFlattener.jsonToFlatMap(new JSONObject(body));
+
+            for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
+                String field = entry.getKey().trim();
+                String expectedValue = entry.getValue().trim();
+
+                Optional<Map.Entry<String, String>> match = apiMap.entrySet()
+                        .stream()
+                        .filter(e -> e.getKey().replaceAll("\\[\\d+\\]", "")
+                                .toLowerCase().endsWith(field.toLowerCase()))
+                        .findFirst();
+
+                String actualValue = match.map(Map.Entry::getValue).orElse("null");
+
+                logBoth(String.format(
+                        "Field Validation -> Field: %-25s | Expected: %-20s | Actual: %-20s",
+                        field, expectedValue, actualValue
+                ));
+
+                if (!expectedValue.equalsIgnoreCase(actualValue)) {
+                    failReasons.append(String.format(
+                            "\nField '%s' mismatch. Expected: %s, Actual: %s",
+                            field, expectedValue, actualValue
+                    ));
+                    pass = false;
+                }
+            }
+        }
+
+        // ========== RESULT HANDLING ==========
+        long durationSec = (System.currentTimeMillis() - startTime) / 1000;
+        if (pass) {
+            logPass("✅ Test passed for testId " + testId + " in " + durationSec + " sec");
+        } else {
+            logFail("[FAIL] Field validation failed for testId " + testId + " Reason: " + failReasons);
+            Assert.fail(failReasons.toString());
         }
     }
 }
