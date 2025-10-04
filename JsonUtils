@@ -1,36 +1,48 @@
-public static List<Map<String, String>> jsonToListOfMaps(String json) {
-    List<Map<String, String>> result = new ArrayList<>();
-    if (json == null || json.isEmpty()) return result;
+public class JsonUtils {
 
-    ObjectMapper mapper = new ObjectMapper();
-    try {
-        if (json.trim().startsWith("[")) { // JSON array
-            List<Map<String,Object>> list = mapper.readValue(json, new TypeReference<List<Map<String,Object>>>(){});
-            for (Map<String,Object> m : list) {
+    // Converts JSON array or single object to List<Map<String,String>>
+    public static List<Map<String, String>> jsonToListOfMaps(String json) {
+        List<Map<String, String>> result = new ArrayList<>();
+        if (json == null || json.isEmpty()) return result;
+
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            if (json.trim().startsWith("[")) {
+                List<Map<String, Object>> list = mapper.readValue(json, new TypeReference<List<Map<String,Object>>>(){});
+                for (Map<String,Object> m : list) {
+                    Map<String,String> flat = new HashMap<>();
+                    flattenMap("", m, flat);
+                    result.add(flat);
+                }
+            } else {
+                Map<String,Object> map = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});
                 Map<String,String> flat = new HashMap<>();
-                flattenMap("", m, flat);
+                flattenMap("", map, flat);
                 result.add(flat);
             }
-        } else { // JSON object
-            Map<String,Object> map = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});
-            Map<String,String> flat = new HashMap<>();
-            flattenMap("", map, flat);
-            result.add(flat);
+        } catch (Exception e) {
+            e.printStackTrace();
         }
-    } catch (Exception e) {
-        e.printStackTrace();
+        return result;
     }
-    return result;
-}
 
-private static void flattenMap(String prefix, Map<String,Object> map, Map<String,String> result) {
-    for (Map.Entry<String,Object> entry : map.entrySet()) {
-        String key = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
-        Object val = entry.getValue();
-        if (val instanceof Map) {
-            flattenMap(key, (Map<String,Object>) val, result);
-        } else {
-            result.put(key, val == null ? "" : val.toString());
+    // Flattens nested JSON into key paths
+    private static void flattenMap(String prefix, Map<String,Object> map, Map<String,String> result) {
+        for (Map.Entry<String,Object> entry : map.entrySet()) {
+            String key = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
+            Object val = entry.getValue();
+            if (val instanceof Map) {
+                flattenMap(key, (Map<String,Object>) val, result);
+            } else {
+                result.put(key, val == null ? "" : val.toString());
+            }
         }
+    }
+
+    // If needed: flatten single JSON object from Excel
+    public static Map<String, String> jsonToFlatMap(String json) {
+        Map<String,String> result = new HashMap<>();
+        jsonToListOfMaps(json).forEach(result::putAll);
+        return result;
     }
 }
