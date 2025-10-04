@@ -1,80 +1,83 @@
-// ========== FIELD-WISE VALIDATION ==========
-boolean pass = true;
-StringBuilder failReasons = new StringBuilder();
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jayway.jsonpath.JsonPath;
 
-// ---------------------- DB VALIDATION ----------------------
-if (isDbRequired && chargeData != null && !chargeData.isEmpty()) {
-    logBoth("Step: Performing DB field-wise validation");
+import java.util.*;
 
-    Map<String, String> dbRow = chargeData.get(0); // Only first record
-    Map<String, String> apiMap = JsonFlattener.jsonToFlatMap(new JSONObject(body));
+public class JsonUtils {
 
-    logBoth("Flattened API keys available: " + apiMap.keySet());
+    private static final ObjectMapper mapper = new ObjectMapper();
 
-    for (Map.Entry<String, String> dbEntry : dbRow.entrySet()) {
-        String field = dbEntry.getKey();
-        String expected = dbEntry.getValue();
+    /**
+     * Converts a JSON string to a flat Map of key-value pairs.
+     * Nested keys are represented in dot notation.
+     */
+    public static Map<String, String> jsonToFlatMap(String json) {
+        Map<String, String> flatMap = new HashMap<>();
+        if (json == null || json.isBlank()) return flatMap;
 
-        // Try to find closest match in flattened API
-        Optional<Map.Entry<String, String>> match = apiMap.entrySet().stream()
-                .filter(e -> e.getKey()
-                        .replaceAll("\\[\\d+\\]", "")
-                        .replaceAll("[^a-zA-Z0-9]", "")
-                        .toLowerCase()
-                        .endsWith(field.replaceAll("[^a-zA-Z0-9]", "").toLowerCase()))
-                .findFirst();
-
-        String actual = match.map(Map.Entry::getValue).orElse("null");
-
-        logBoth(String.format("🔍 DB Validation -> Field: %-20s | Expected: %-15s | Actual: %-15s",
-                field, expected, actual));
-
-        if (!expected.equalsIgnoreCase(actual)) {
-            failReasons.append(String.format(
-                    "\nField '%s' mismatch. Expected: %s, Actual: %s",
-                    field, expected, actual
-            ));
-            pass = false;
+        try {
+            JsonNode root = mapper.readTree(json);
+            flattenJson("", root, flatMap);
+        } catch (Exception e) {
+            System.err.println("Error in jsonToFlatMap: " + e.getMessage());
         }
+
+        return flatMap;
     }
 
-    logBoth("✅ DB Field-wise validation completed");
+    /**
+     * Converts a JSON string (object or array) into a List of flat Maps.
+     * Each array element becomes one Map. Objects become a single Map.
+     */
+    public static List<Map<String, String>> jsonToListOfMaps(String json) {
+        List<Map<String, String>> list = new ArrayList<>();
+        if (json == null || json.isBlank()) return list;
 
-}
-// ---------------------- EXCEL VALIDATION ----------------------
-else if (!expectedFieldsJson.trim().isEmpty()) {
-    logBoth("Step: Performing Excel field-wise validation");
+        try {
+            // Parse with JsonPath to handle arrays uniformly
+            Object document = JsonPath.parse(json).json();
+            JsonNode root = mapper.readTree(mapper.writeValueAsString(document));
 
-    Map<String, String> expectedFields = ExcelUtils.jsonToMap(expectedFieldsJson);
-    Map<String, String> apiMap = JsonFlattener.jsonToFlatMap(new JSONObject(body));
+            if (root.isArray()) {
+                for (JsonNode node : root) {
+                    Map<String, String> flat = new HashMap<>();
+                    flattenJson("", node, flat);
+                    list.add(flat);
+                }
+            } else {
+                Map<String, String> flat = new HashMap<>();
+                flattenJson("", root, flat);
+                list.add(flat);
+            }
 
-    logBoth("Flattened API keys available: " + apiMap.keySet());
-
-    for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
-        String field = entry.getKey().trim();
-        String expectedValue = entry.getValue().trim();
-
-        Optional<Map.Entry<String, String>> match = apiMap.entrySet().stream()
-                .filter(e -> e.getKey()
-                        .replaceAll("\\[\\d+\\]", "")
-                        .replaceAll("[^a-zA-Z0-9]", "")
-                        .toLowerCase()
-                        .endsWith(field.replaceAll("[^a-zA-Z0-9]", "").toLowerCase()))
-                .findFirst();
-
-        String actualValue = match.map(Map.Entry::getValue).orElse("null");
-
-        logBoth(String.format("📘 Excel Validation -> Field: %-20s | Expected: %-15s | Actual: %-15s",
-                field, expectedValue, actualValue));
-
-        if (!expectedValue.equalsIgnoreCase(actualValue)) {
-            failReasons.append(String.format(
-                    "\nField '%s' mismatch. Expected: %s, Actual: %s",
-                    field, expectedValue, actualValue
-            ));
-            pass = false;
+        } catch (Exception e) {
+            System.err.println("Error in jsonToListOfMaps: " + e.getMessage());
         }
+
+        return list;
     }
 
-    logBoth("✅ Excel Field-wise validation completed");
+    /**
+     * Recursive method to flatten a JsonNode into a flat Map.
+     * Nested objects use dot notation; arrays use [index].
+     */
+    private static void flattenJson(String prefix, JsonNode node, Map<String, String> result) {
+        if (node.isObject()) {
+            node.fieldNames().forEachRemaining(field -> {
+                JsonNode child = node.get(field);
+                String newKey = prefix.isEmpty() ? field : prefix + "." + field;
+                flattenJson(newKey, child, result);
+            });
+        } else if (node.isArray()) {
+            int index = 0;
+            for (JsonNode item : node) {
+                String newKey = prefix + "[" + index + "]";
+                flattenJson(newKey, item, result);
+                index++;
+            }
+        } else if (node.isValueNode()) {
+            result.put(prefix, node.asText().trim());
+        }
+    }
 }
