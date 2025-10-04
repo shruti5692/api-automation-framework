@@ -119,36 +119,47 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
                 .toLowerCase()
                 .trim();
     };
+// ------------------- DB-driven validation ------------------- //
+if (isDbRequired && dbData != null && !dbData.isEmpty()) {
+    safeLog("Step: Performing DB-driven field validation (using first DB row)");
 
-    // 1) DB-driven validation (if DB row exists)
-    if (isDbRequired && dbData != null && !dbData.isEmpty()) {
-        safeLog("Step: Performing DB-driven field validation (using first DB row)");
-        Map<String, String> dbRow = dbData.get(0);
-        safeLog("DB row keys: " + dbRow.keySet());
+    Map<String, String> dbRow = dbData.get(0);
+    safeLog("DB row keys: " + dbRow.keySet());
 
-        for (Map.Entry<String, String> dbEntry : dbRow.entrySet()) {
-            String dbField = dbEntry.getKey();                 // e.g., OPEN_CLO_STA, CHG_ID, CYC_CNT
-            String expected = dbEntry.getValue();
+    for (Map.Entry<String, String> dbEntry : dbRow.entrySet()) {
+        String dbField = dbEntry.getKey();       // e.g., OPEN_CLO_STA, CHG_ID
+        String expected = dbEntry.getValue();
 
-            // find first apiFlatMap entry whose normalized key ends with normalized dbField
-            Optional<Map.Entry<String, String>> match = apiFlatMap.entrySet().stream()
-                    .filter(e -> normalize.apply(e.getKey()).endsWith(normalize.apply(dbField)))
-                    .findFirst();
+        // find first API entry whose normalized key ends with normalized DB field
+        Optional<Map.Entry<String, String>> match = apiFlatMap.entrySet().stream()
+                .filter(e -> normalize.apply(e.getKey()).endsWith(normalize.apply(dbField)))
+                .findFirst();
 
-            String actual = match.map(Map.Entry::getValue).orElse(null);
+        String actual = match.map(Map.Entry::getValue).orElse(null);
 
-            // LOG expected vs actual clearly (both system and logBoth)
-            String logLine = String.format("DB Validation -> Field: %-18s | Expected: %-12s | Actual: %-12s",
-                    dbField, expected == null ? "null" : expected, actual == null ? "null" : actual);
-            safeLog(logLine);
+        // Safe logging of expected vs actual
+        String logLine = String.format(
+                "DB Validation -> Field: %-18s | Expected: %-12s | Actual: %-12s",
+                dbField,
+                expected != null ? expected : "null",
+                actual != null ? actual : "null"
+        );
+        safeLog(logLine);
 
-            if (!equalsIgnoreCaseTrim(expected, actual)) {
-                pass = false;
-                failReasons.append(String.format("\nField '%s' mismatch. Expected: %s, Actual: %s", dbField, expected, actual));
-            }
+        // Compare values
+        if (!equalsIgnoreCaseTrim(expected, actual)) {
+            pass = false;
+            failReasons.append(String.format(
+                    "\nField '%s' mismatch. Expected: %s, Actual: %s",
+                    dbField,
+                    expected != null ? expected : "null",
+                    actual != null ? actual : "null"
+            ));
         }
-        safeLog("DB validation finished");
     }
+
+    safeLog("DB validation finished");
+}
     // 2) Excel-driven validation when ExpectedFields provided and DB not used
     else if (!expectedFieldsJson.trim().isEmpty()) {
         safeLog("Step: Performing Excel-driven field validation using ExpectedFields");
