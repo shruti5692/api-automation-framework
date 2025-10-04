@@ -1,179 +1,80 @@
-package tests;
+// ========== FIELD-WISE VALIDATION ==========
+boolean pass = true;
+StringBuilder failReasons = new StringBuilder();
 
-import okhttp3.*;
-import org.framework.config.ConfigManager;
-import org.framework.utils.ExcelUtils;
-import org.framework.utils.JwtFetcher;
-import org.framework.utils.MainframeUtils;
-import org.json.JSONObject;
-import org.junit.Assert;
-import org.testng.annotations.Test;
+// ---------------------- DB VALIDATION ----------------------
+if (isDbRequired && chargeData != null && !chargeData.isEmpty()) {
+    logBoth("Step: Performing DB field-wise validation");
 
-import java.util.*;
-import java.util.stream.Collectors;
+    Map<String, String> dbRow = chargeData.get(0); // Only first record
+    Map<String, String> apiMap = JsonFlattener.jsonToFlatMap(new JSONObject(body));
 
-import static tests.DbFetchHelper.fetchData;
-import static org.framework.utils.LoggerUtils.*;
+    logBoth("Flattened API keys available: " + apiMap.keySet());
 
-public class SE78Test {
+    for (Map.Entry<String, String> dbEntry : dbRow.entrySet()) {
+        String field = dbEntry.getKey();
+        String expected = dbEntry.getValue();
 
-    private static final String EXCEL_PATH = ConfigManager.get("excel_path");
-    private static final String SHEET_NAME = "TestCases";
-    private static final Set<String> DB_REQUIRED_TESTS = Set.of("TC02_ValidChargeID", "TC03_ClosedChargeID");
-    private static final String CHARGE_QUERY = "SELECT OPEN_CLO_STA, CHG_FORM_STA, CYC_CNT, ACYC_CNT FROM INTST02.SEC_CHARGE WHERE CHG_ID = ?";
+        // Try to find closest match in flattened API
+        Optional<Map.Entry<String, String>> match = apiMap.entrySet().stream()
+                .filter(e -> e.getKey()
+                        .replaceAll("\\[\\d+\\]", "")
+                        .replaceAll("[^a-zA-Z0-9]", "")
+                        .toLowerCase()
+                        .endsWith(field.replaceAll("[^a-zA-Z0-9]", "").toLowerCase()))
+                .findFirst();
 
-    private final OkHttpClient client = new OkHttpClient();
+        String actual = match.map(Map.Entry::getValue).orElse("null");
 
-    @Test(dataProvider = "se78Data")
-    public void callSecurityChargeApi(Map<String, String> row) throws Exception {
+        logBoth(String.format("🔍 DB Validation -> Field: %-20s | Expected: %-15s | Actual: %-15s",
+                field, expected, actual));
 
-        long startTime = System.currentTimeMillis();
-        String testId = row.getOrDefault("TestCaseID", "").trim();
-        String chargeId = row.getOrDefault("ChargeID", "").trim();
-        String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
-        String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim();
-
-        logBoth("Running SE78 test: " + testId + " (ChargeID=" + chargeId + ")");
-
-        boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
-        List<Map<String, String>> chargeData = null;
-
-        // ========== DB FETCH ==========
-        if (isDbRequired && !chargeId.isEmpty()) {
-            logBoth("Step: Fetching DB data for ChargeID " + chargeId);
-            try {
-                chargeData = fetchData(CHARGE_QUERY, chargeId);
-                if (chargeData == null || chargeData.isEmpty()) {
-                    logWarn("ChargeID not found in DB");
-                } else {
-                    logBoth("DB Data: " + chargeData);
-                }
-            } catch (Exception e) {
-                logError("Exception while fetching DB data: " + e.getMessage());
-            }
-        } else {
-            logBoth("DB fetch skipped for this test case");
-        }
-
-        // ========== HEADERS & JWT ==========
-        logBoth("Step: Preparing HTTP headers for API call");
-        String jwt = JwtFetcher.fetchIb2bJwt();
-
-        Headers.Builder headerBuilder = new Headers.Builder();
-        headerBuilder.add("Content-Type", "application/json");
-        headerBuilder.add("X-HSBC-Channel-Id", "OHB");
-        headerBuilder.add("X-HSBC-Request-Correlation-Id", "123498");
-        headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
-        headerBuilder.add("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)");
-        headerBuilder.add("X-HSBC-User-Id", "43998226");
-
-        Headers headersObj = headerBuilder.build();
-        headersObj.names().forEach(name -> logBoth("Header added: " + name + " = " + headersObj.get(name)));
-
-        // ========== API CALL ==========
-        String url = ConfigManager.get("se78.url") + chargeId + "/chargedtl";
-        logBoth("Step: Calling SE78 API with URL: " + url);
-
-        int status;
-        String body;
-
-        Request request = new Request.Builder()
-                .url(url)
-                .headers(headersObj)
-                .get()
-                .build();
-
-        try (Response resp = client.newCall(request).execute()) {
-            status = resp.code();
-            body = resp.body() != null ? resp.body().string() : "";
-        }
-
-        logBoth("HTTP Status: " + status);
-        logBoth("Response Body (truncated): " + body.substring(0, Math.min(body.length(), 500)));
-
-        // ========== STATUS VALIDATION ==========
-        if (!expStatusStr.isBlank()) {
-            int expStatus = Integer.parseInt(expStatusStr);
-            Assert.assertEquals("Unexpected HTTP status for test " + testId, expStatus, status);
-            logPass("Expected HTTP status matched: " + expStatus);
-        }
-
-        // ========== FIELD-WISE VALIDATION ==========
-        boolean pass = true;
-        StringBuilder failReasons = new StringBuilder();
-
-        if (isDbRequired && chargeData != null && !chargeData.isEmpty()) {
-            // Compare API vs DB data
-            logBoth("Step: Performing DB field-wise validation");
-            Map<String, String> dbRow = chargeData.get(0);
-            Map<String, String> apiMap = JsonFlattener.jsonToFlatMap(new JSONObject(body));
-
-            for (Map.Entry<String, String> dbEntry : dbRow.entrySet()) {
-                String field = dbEntry.getKey();
-                String expected = dbEntry.getValue();
-
-                Optional<Map.Entry<String, String>> match = apiMap.entrySet().stream()
-                        .filter(e -> e.getKey().replaceAll("\\[\\d+\\]", "")
-                                .toLowerCase().endsWith(field.toLowerCase()))
-                        .findFirst();
-
-                String actual = match.map(Map.Entry::getValue).orElse("null");
-
-                logBoth(String.format(
-                        "Field Validation -> Field: %-25s | Expected: %-20s | Actual: %-20s",
-                        field, expected, actual
-                ));
-
-                if (!expected.equalsIgnoreCase(actual)) {
-                    failReasons.append(String.format(
-                            "\nField '%s' mismatch. Expected: %s, Actual: %s",
-                            field, expected, actual
-                    ));
-                    pass = false;
-                }
-            }
-
-        } else if (!expectedFieldsJson.isBlank()) {
-            // Compare API vs ExpectedFields from Excel
-            logBoth("Step: Performing dynamic field-wise validation using Excel fields");
-
-            Map<String, String> expectedFields = ExcelUtils.jsonToMap(expectedFieldsJson);
-            Map<String, String> apiMap = JsonFlattener.jsonToFlatMap(new JSONObject(body));
-
-            for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
-                String field = entry.getKey().trim();
-                String expectedValue = entry.getValue().trim();
-
-                Optional<Map.Entry<String, String>> match = apiMap.entrySet()
-                        .stream()
-                        .filter(e -> e.getKey().replaceAll("\\[\\d+\\]", "")
-                                .toLowerCase().endsWith(field.toLowerCase()))
-                        .findFirst();
-
-                String actualValue = match.map(Map.Entry::getValue).orElse("null");
-
-                logBoth(String.format(
-                        "Field Validation -> Field: %-25s | Expected: %-20s | Actual: %-20s",
-                        field, expectedValue, actualValue
-                ));
-
-                if (!expectedValue.equalsIgnoreCase(actualValue)) {
-                    failReasons.append(String.format(
-                            "\nField '%s' mismatch. Expected: %s, Actual: %s",
-                            field, expectedValue, actualValue
-                    ));
-                    pass = false;
-                }
-            }
-        }
-
-        // ========== RESULT HANDLING ==========
-        long durationSec = (System.currentTimeMillis() - startTime) / 1000;
-        if (pass) {
-            logPass("✅ Test passed for testId " + testId + " in " + durationSec + " sec");
-        } else {
-            logFail("[FAIL] Field validation failed for testId " + testId + " Reason: " + failReasons);
-            Assert.fail(failReasons.toString());
+        if (!expected.equalsIgnoreCase(actual)) {
+            failReasons.append(String.format(
+                    "\nField '%s' mismatch. Expected: %s, Actual: %s",
+                    field, expected, actual
+            ));
+            pass = false;
         }
     }
+
+    logBoth("✅ DB Field-wise validation completed");
+
+}
+// ---------------------- EXCEL VALIDATION ----------------------
+else if (!expectedFieldsJson.trim().isEmpty()) {
+    logBoth("Step: Performing Excel field-wise validation");
+
+    Map<String, String> expectedFields = ExcelUtils.jsonToMap(expectedFieldsJson);
+    Map<String, String> apiMap = JsonFlattener.jsonToFlatMap(new JSONObject(body));
+
+    logBoth("Flattened API keys available: " + apiMap.keySet());
+
+    for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
+        String field = entry.getKey().trim();
+        String expectedValue = entry.getValue().trim();
+
+        Optional<Map.Entry<String, String>> match = apiMap.entrySet().stream()
+                .filter(e -> e.getKey()
+                        .replaceAll("\\[\\d+\\]", "")
+                        .replaceAll("[^a-zA-Z0-9]", "")
+                        .toLowerCase()
+                        .endsWith(field.replaceAll("[^a-zA-Z0-9]", "").toLowerCase()))
+                .findFirst();
+
+        String actualValue = match.map(Map.Entry::getValue).orElse("null");
+
+        logBoth(String.format("📘 Excel Validation -> Field: %-20s | Expected: %-15s | Actual: %-15s",
+                field, expectedValue, actualValue));
+
+        if (!expectedValue.equalsIgnoreCase(actualValue)) {
+            failReasons.append(String.format(
+                    "\nField '%s' mismatch. Expected: %s, Actual: %s",
+                    field, expectedValue, actualValue
+            ));
+            pass = false;
+        }
+    }
+
+    logBoth("✅ Excel Field-wise validation completed");
 }
