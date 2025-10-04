@@ -1,40 +1,30 @@
-package org.framework.utils;
-
-import org.framework.config.ConfigManager;
-import java.sql.*;
-import java.util.*;
-
-public class DBUtils {
-
-    private static Connection getConnection() throws Exception {
-        String url  = ConfigManager.get("db.url");
-        String user = ConfigManager.get("db.user");
-        String pass = ConfigManager.get("db.password");
-        Class.forName("com.ibm.db2.jcc.DB2Driver");
-        return DriverManager.getConnection(url, user, pass);
+public static void logDbDataInTable(List<Map<String, String>> dbData, Consumer<String> logger) {
+    if (dbData == null || dbData.isEmpty()) {
+        logger.accept("No DB data fetched.");
+        return;
     }
 
-    /** Execute any SELECT and return List of Map<column,value>. */
-    public static List<Map<String,Object>> executeQuery(String sql, Object... params) throws Exception {
-        try (Connection con = getConnection();
-             PreparedStatement ps = con.prepareStatement(sql)) {
+    // Extract headers from first row
+    Set<String> headers = dbData.get(0).keySet();
 
-            for (int i=0; i<params.length; i++) ps.setObject(i+1, params[i]);
+    StringBuilder table = new StringBuilder("<table border='1' style='border-collapse: collapse;'>");
+    
+    // Header row
+    table.append("<tr style='background-color: #f2f2f2;'>");
+    for (String h : headers) {
+        table.append("<th>").append(h).append("</th>");
+    }
+    table.append("</tr>");
 
-            try (ResultSet rs = ps.executeQuery()) {
-                List<Map<String,Object>> rows = new ArrayList<>();
-                ResultSetMetaData md = rs.getMetaData();
-                int cols = md.getColumnCount();
-
-                while (rs.next()) {
-                    Map<String,Object> row = new LinkedHashMap<>();
-                    for (int c = 1; c <= cols; c++) {
-                        row.put(md.getColumnLabel(c).toLowerCase(), rs.getObject(c));
-                    }
-                    rows.add(row);
-                }
-                return rows;
-            }
+    // Data rows
+    for (Map<String, String> row : dbData) {
+        table.append("<tr>");
+        for (String h : headers) {
+            table.append("<td>").append(row.getOrDefault(h, "")).append("</td>");
         }
+        table.append("</tr>");
     }
+
+    table.append("</table>");
+    logger.accept(table.toString());
 }
