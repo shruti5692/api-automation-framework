@@ -1,48 +1,98 @@
+package org.framework.utils;
+
+import com.jayway.jsonpath.JsonPath;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.util.*;
+
+/**
+ * Utility class for flexible JSON parsing and normalization.
+ * Works for both ExpectedFields-style JSON and API response JSONs.
+ */
 public class JsonUtils {
 
-    // Converts JSON array or single object to List<Map<String,String>>
-    public static List<Map<String, String>> jsonToListOfMaps(String json) {
-        List<Map<String, String>> result = new ArrayList<>();
-        if (json == null || json.isEmpty()) return result;
+    private static final ObjectMapper mapper = new ObjectMapper();
 
-        ObjectMapper mapper = new ObjectMapper();
+    /**
+     * Converts a simple JSON object (like ExpectedFields) into a flat Map<String, String>.
+     * Example: {"applicationId":"SECN7801","correlationId":"123498"} → Map{"applicationId":"SECN7801",...}
+     */
+    public static Map<String, String> jsonToFlatMap(String json) {
+        Map<String, String> flatMap = new HashMap<>();
+
+        if (json == null || json.isBlank()) return flatMap;
+
         try {
-            if (json.trim().startsWith("[")) {
-                List<Map<String, Object>> list = mapper.readValue(json, new TypeReference<List<Map<String,Object>>>(){});
-                for (Map<String,Object> m : list) {
-                    Map<String,String> flat = new HashMap<>();
-                    flattenMap("", m, flat);
-                    result.add(flat);
+            JsonNode root = mapper.readTree(json);
+            flattenJson("", root, flatMap);
+        } catch (Exception e) {
+            System.err.println("⚠️ Error in jsonToFlatMap: " + e.getMessage());
+        }
+
+        return flatMap;
+    }
+
+    /**
+     * Converts a JSON response into a List of flat maps.
+     * It can handle arrays and nested objects gracefully.
+     * Example:
+     * {
+     *   "errorResponse": {
+     *     "errorResponseDetails": {
+     *       "errorInfo": [ { "applicationId":"SECN7801" } ]
+     *     }
+     *   }
+     * }
+     * becomes → List of Map { "applicationId":"SECN7801" }
+     */
+    public static List<Map<String, String>> jsonToListOfMaps(String json) {
+        List<Map<String, String>> list = new ArrayList<>();
+
+        if (json == null || json.isBlank()) return list;
+
+        try {
+            Object document = JsonPath.parse(json).json();
+            JsonNode root = mapper.readTree(mapper.writeValueAsString(document));
+
+            if (root.isArray()) {
+                for (JsonNode node : root) {
+                    Map<String, String> flat = new HashMap<>();
+                    flattenJson("", node, flat);
+                    list.add(flat);
                 }
             } else {
-                Map<String,Object> map = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});
-                Map<String,String> flat = new HashMap<>();
-                flattenMap("", map, flat);
-                result.add(flat);
+                Map<String, String> flat = new HashMap<>();
+                flattenJson("", root, flat);
+                list.add(flat);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            System.err.println("⚠️ Error in jsonToListOfMaps: " + e.getMessage());
         }
-        return result;
+
+        return list;
     }
 
-    // Flattens nested JSON into key paths
-    private static void flattenMap(String prefix, Map<String,Object> map, Map<String,String> result) {
-        for (Map.Entry<String,Object> entry : map.entrySet()) {
-            String key = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
-            Object val = entry.getValue();
-            if (val instanceof Map) {
-                flattenMap(key, (Map<String,Object>) val, result);
-            } else {
-                result.put(key, val == null ? "" : val.toString());
+    /**
+     * Recursively flattens JSON structure into key-value pairs.
+     * Example: {"a":{"b":"c"}} → {"a.b":"c"}
+     */
+    private static void flattenJson(String prefix, JsonNode node, Map<String, String> result) {
+        if (node.isObject()) {
+            node.fieldNames().forEachRemaining(field -> {
+                JsonNode child = node.get(field);
+                String newKey = prefix.isEmpty() ? field : prefix + "." + field;
+                flattenJson(newKey, child, result);
+            });
+        } else if (node.isArray()) {
+            int index = 0;
+            for (JsonNode item : node) {
+                String newKey = prefix + "[" + index + "]";
+                flattenJson(newKey, item, result);
+                index++;
             }
+        } else if (node.isValueNode()) {
+            result.put(prefix, node.asText().trim());
         }
-    }
-
-    // If needed: flatten single JSON object from Excel
-    public static Map<String, String> jsonToFlatMap(String json) {
-        Map<String,String> result = new HashMap<>();
-        jsonToListOfMaps(json).forEach(result::putAll);
-        return result;
     }
 }
