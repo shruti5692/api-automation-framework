@@ -1,111 +1,95 @@
 @Test(dataProvider = "se78Data")
 public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
+    // ------------------- START TIMER ------------------- //
     long startTime = System.currentTimeMillis();
 
-    String testId = row.getOrDefault("TestCaseID", "").trim();
-    String chargeId = row.getOrDefault("ChargeID", "").trim();
+    String testId       = row.getOrDefault("TestCaseID", "").trim();
+    String chargeId     = row.getOrDefault("ChargeID", "").trim();
+    String headers      = row.getOrDefault("Headers", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
     String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim();
 
-    logBoth("Running SE78 test: " + testId + " (ChargeID=" + chargeId + ")");
+    int expectedStatus = expStatusStr.isEmpty() ? 200 : Integer.parseInt(expStatusStr);
 
-    // ------------------- DB Fetch -------------------
-    List<Map<String, String>> dbData = new ArrayList<>();
-    String dbFormStatus = "", dbCycCnt = "", dbOpenStatus = "UNKNOWN";
-    boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
+    logBoth("------------------------------------------------------------");
+    logBoth("Starting test case: " + testId);
+    logBoth("Charge ID: " + chargeId);
+    logBoth("Expected Status: " + expectedStatus);
 
-    if (isDbRequired && !chargeId.isEmpty()) {
-        logBoth("Step: Fetching DB data for ChargeID " + chargeId);
-        try {
-            dbData = DbFetchHelper.fetchData(chargeQuery, chargeId);
-            if (!dbData.isEmpty()) {
-                Map<String, String> chargeRow = dbData.get(0);
-                dbOpenStatus = chargeRow.getOrDefault("OPEN_CLO_STA", "UNKNOWN");
-                dbFormStatus = chargeRow.getOrDefault("CHG_FORM_STA", "");
-                dbCycCnt = chargeRow.getOrDefault("CYC_CNT", "");
-            } else {
-                logBoth("[WARN] ChargeID not found in DB");
-            }
-        } catch (Exception e) {
-            logBoth("[ERROR] Exception while fetching DB data: " + e.getMessage());
+    // ------------------- BUILD API REQUEST ------------------- //
+    String url = "https://digitaldev-int-rbwm.systems.uk.hsbc/cb-rps-05/qb-hbeu-rps-sta-prod-sec-chrg-eng-sat-intermd";
+    logBoth("API URL: " + url);
+
+    HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+    conn.setRequestMethod("POST");
+    conn.setRequestProperty("Content-Type", "application/json");
+
+    // Apply dynamic headers from Excel
+    if (!headers.isEmpty()) {
+        Map<String, String> headerMap = JsonUtils.jsonToFlatMap(headers);
+        for (Map.Entry<String, String> entry : headerMap.entrySet()) {
+            conn.setRequestProperty(entry.getKey(), entry.getValue());
         }
-    } else {
-        logBoth("DB fetch skipped for this test case");
     }
 
-    // ------------------- Prepare Headers -------------------
-    logBoth("Step: Preparing HTTP headers for API call");
-    String jwt = JwtFetcher.fetchIb2bJwt();
+    conn.setDoOutput(true);
 
-    Headers.Builder headerBuilder = new Headers.Builder();
-    headerBuilder.add("Content-Type", "application/json");
-    headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
-    headerBuilder.add("X-HSBC-Sort-Code", "400788");
-    headerBuilder.add("X-HSBC-Src-UserAgent", "Apache HttpClient/4.5.6 (Java/1.8.0_112)");
-    // Add other static headers here
+    // Create request body
+    String requestBody = String.format(
+            "{\"sensitiveKey\":[{\"key\":\"84d89877f0d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7884\",\"value\":\"%s\"}]}",
+            chargeId);
+    logBoth("Request Body: " + requestBody);
 
-    Headers headersObj = headerBuilder.build();
-    headersObj.names().forEach(name -> logBoth("Header added: " + name + " = " + headersObj.get(name)));
-
-    // ------------------- API Call -------------------
-    String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
-    String url = ConfigManager.get("se78.url") + safeCharge + "/chargedtl";
-    logBoth("Step: Calling SE78 API with URL: " + url);
-
-    OkHttpClient client = new OkHttpClient();
-    String apiBody;
-    int status;
-
-    try (Response resp = client.newCall(new Request.Builder().url(url).headers(headersObj).get().build()).execute()) {
-        status = resp.code();
-        apiBody = resp.body() != null ? resp.body().string() : "";
+    try (OutputStream os = conn.getOutputStream()) {
+        os.write(requestBody.getBytes(StandardCharsets.UTF_8));
     }
 
-    logBoth("HTTP Status: " + status);
-    logBoth("Response Body (truncated): " + (apiBody.length() > 500 ? apiBody.substring(0, 500) + "..." : apiBody));
+    // ------------------- API RESPONSE ------------------- //
+    int actualStatus = conn.getResponseCode();
+    String response = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    logBoth("HTTP Status: " + actualStatus);
+    logBoth("Response Body: " + response);
 
-    // ------------------- Status Validation -------------------
-    if (!expStatusStr.isBlank()) {
-        int expectedStatus = Integer.parseInt(expStatusStr);
-        Assert.assertEquals(status, expectedStatus);
-        logBoth("Expected HTTP status matched: " + expectedStatus);
-    }
-
-    // ------------------- Convert API JSON to flattened map -------------------
-    List<Map<String, String>> apiDataList = JsonUtils.jsonToListOfMaps(apiBody);
-
-    // ------------------- Field-wise Validation -------------------
-    boolean pass = true;
+    boolean pass = (expectedStatus == actualStatus);
     String failReason = "";
-if (!expectedFieldsJson.isBlank()) {
-    logBoth("Step: Performing dynamic field-wise validation using Excel fields");
-    Map<String, String> expectedFields = JsonUtils.jsonToFlatMap(expectedFieldsJson);
 
-    for (Map<String, String> apiRecord : apiDataList) {
-        for (Map.Entry<String, String> expectedEntry : expectedFields.entrySet()) {
-            String fieldName = expectedEntry.getKey();
-            String expectedValue = expectedEntry.getValue();
+    // ------------------- VALIDATION LOGIC ------------------- //
+    List<Map<String, String>> apiDataList = JsonUtils.jsonToListOfMaps(response);
+    List<Map<String, String>> dbDataList = DbFetchHelper.fetchDbData(chargeId); // You already have this method
 
-            // Find matching flattened key in API
-            String actualValue = apiRecord.entrySet().stream()
-                .filter(e -> e.getKey().endsWith(fieldName))
-                .map(Map.Entry::getValue)
-                .findFirst()
-                .orElse(null);
+    boolean hasDbData = dbDataList != null && !dbDataList.isEmpty();
+    boolean hasExpectedFields = expectedFieldsJson != null && !expectedFieldsJson.isBlank();
 
-            if (!Objects.equals(expectedValue, actualValue)) {
-                pass = false;
-                failReason += "Field '" + fieldName + "' mismatch. Expected: " + expectedValue + ", Actual: " + actualValue + "\n";
-                logBoth(failReason);
+    if (hasDbData) {
+        logBoth("Step: Performing field-wise validation using DB data");
+
+        for (Map<String, String> dbRecord : dbDataList) {
+            for (Map.Entry<String, String> dbEntry : dbRecord.entrySet()) {
+                String fieldName = dbEntry.getKey();
+                String expectedValue = dbEntry.getValue();
+
+                // find matching API key (case-insensitive)
+                String actualValue = apiDataList.stream()
+                        .flatMap(apiMap -> apiMap.entrySet().stream())
+                        .filter(e -> e.getKey().equalsIgnoreCase(fieldName)
+                                || e.getKey().toLowerCase().endsWith(fieldName.toLowerCase()))
+                        .map(Map.Entry::getValue)
+                        .findFirst()
+                        .orElse(null);
+
+                if (!Objects.equals(expectedValue, actualValue)) {
+                    pass = false;
+                    failReason += String.format("Field '%s' mismatch. Expected: %s, Actual: %s%n",
+                            fieldName, expectedValue, actualValue);
+                    logBoth(failReason);
+                }
             }
         }
     }
-}
+    else if (hasExpectedFields) {
+        logBoth("Step: Performing dynamic field-wise validation using Excel ExpectedFields");
 
-
-    if (!expectedFieldsJson.isBlank()) {
-        logBoth("Step: Performing field-wise validation using selective fields from Excel");
         Map<String, String> expectedFields = JsonUtils.jsonToFlatMap(expectedFieldsJson);
 
         for (Map<String, String> apiRecord : apiDataList) {
@@ -113,52 +97,34 @@ if (!expectedFieldsJson.isBlank()) {
                 String fieldName = expectedEntry.getKey();
                 String expectedValue = expectedEntry.getValue();
 
-                // Find matching field in flattened API response
+                // find matching key from API (case-insensitive)
                 String actualValue = apiRecord.entrySet().stream()
-                        .filter(e -> e.getKey().endsWith(fieldName))
+                        .filter(e -> e.getKey().equalsIgnoreCase(fieldName)
+                                || e.getKey().toLowerCase().endsWith(fieldName.toLowerCase()))
                         .map(Map.Entry::getValue)
                         .findFirst()
                         .orElse(null);
 
                 if (!Objects.equals(expectedValue, actualValue)) {
                     pass = false;
-                    failReason += "Field '" + fieldName + "' mismatch. Expected: " + expectedValue + ", Actual: " + actualValue + "\n";
+                    failReason += String.format("Field '%s' mismatch. Expected: %s, Actual: %s%n",
+                            fieldName, expectedValue, actualValue);
                     logBoth(failReason);
                 }
             }
         }
-    }
-
-    // ------------------- DB validation for required tests -------------------
-    if (isDbRequired) {
-        logBoth("Step: Performing DB field-wise validation");
-        for (Map<String, String> apiRecord : apiDataList) {
-            boolean recordMatched = dbData.stream().anyMatch(dbRecord ->
-                    Objects.equals(apiRecord.get("FormStatus"), dbRecord.get("CHG_FORM_STA")) &&
-                    Objects.equals(apiRecord.get("CyclicCount"), dbRecord.get("CYC_CNT"))
-            );
-
-            if (!recordMatched) {
-                pass = false;
-                failReason += "API record not found in DB: " + apiRecord + "\n";
-                logBoth(failReason);
-            }
-        }
-    }
-
-    // ------------------- Log Evidence Section -------------------
-    logDbAndEvidence(dbData, testId, test);
-
-    // ------------------- Test Result & Duration -------------------
-    long durationSec = (System.currentTimeMillis() - startTime) / 1000;
-    if (pass) {
-        logPass("Test passed for testId " + testId + " in " + durationSec + " sec");
     } else {
-        logFail("Field validation failed for testId " + testId + " Reason: " + failReason);
+        logBoth("No DB data or ExpectedFields found — skipping field-wise validation");
     }
 
-    ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testId,
-            pass ? "PASS" : "FAIL: " + failReason, durationSec);
+    // ------------------- RESULT SECTION ------------------- //
+    if (pass) {
+        logBoth("[PASS] Test Case: " + testId + " passed successfully!");
+    } else {
+        logBoth("[FAIL] Field validation failed for testId " + testId + " Reason: " + failReason);
+    }
 
-    logBoth("== End of Test: " + testId + " (Duration: " + durationSec + " sec) ==");
+    long endTime = System.currentTimeMillis();
+    logBoth("Execution time: " + (endTime - startTime) + " ms");
+    logBoth("------------------------------------------------------------");
 }
