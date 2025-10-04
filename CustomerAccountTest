@@ -43,7 +43,11 @@ public class CustomerAccountTest {
         // ---------- Step 3: Prepare headers ----------
         Map<String, String> headersMap = new HashMap<>(JsonPath.read(headerJson, "$"));
         headersMap.put("X-HSBC-E2E-Trust-Token", jwt);
-        headersMap.put("X-HSBC-Sensitive-Data", custNo);
+        String sensitiveJson = String.format(
+    "[{\"key\":\"%s\",\"value\":\"%s\"}]",
+    SENSITIVE_KEY, custNo
+);
+headersMap.put("X-HSBC-Sensitive-Data", sensitiveJson);
 
         // ---------- Step 4: Build URL ----------
         String url = ConfigManager.get("cust.url")
