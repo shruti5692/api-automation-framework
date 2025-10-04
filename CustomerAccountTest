@@ -1,71 +1,107 @@
-@Test
-public void validateCustomerAccounts() throws Exception {
+package tests;
 
-    // ---------------- Read credentials from Excel ---------------- //
-    Map<String, String> authRow = ExcelUtils.readSheet(EXCEL_PATH, AUTH_SHEET).get(0);
-    String jwt = JwtFetcher.fetchStaffJwt(authRow.get("Username"));
+import com.jayway.jsonpath.JsonPath;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import org.framework.config.ConfigManager;
+import org.framework.utils.ExcelUtils;
+import org.framework.utils.JwtFetcher;
+import org.junit.Assert;
+import org.junit.Test;
 
-    // ---------------- Read test data ---------------- //
-    Map<String, String> testRow = ExcelUtils.readSheet(EXCEL_PATH, TEST_SHEET).get(0);
-    String custNo = testRow.get("CustomerIdentificationNumber");
-    String headerJson = testRow.get("Headers");
+import java.util.*;
 
-    // ---------------- Prepare headers ---------------- //
-    Map<String, String> headersMap = new HashMap<>(JsonPath.read(headerJson, "$"));
-    headersMap.put("X-HSBC-E2E-Trust-Token", jwt);
-    headersMap.put("X-HSBC-Sensitive-Data", custNo);
+import static tests.DbFetchHelper.fetchData;
 
-    // ---------------- Build URL ---------------- //
-    String url = ConfigManager.get("cust.url") + SENSITIVE_KEY + "/rel-acct?maxAccounts=0004";
+public class CustomerAccountTest {
 
-    // ---------------- Debug Logging ---------------- //
-    System.out.println("========== DEBUG INFO ==========");
-    System.out.println("JWT (first 50 chars): " + (jwt != null ? jwt.substring(0, Math.min(50, jwt.length())) + "..." : "null"));
-    System.out.println("Customer No        : " + custNo);
-    System.out.println("Final URL          : " + url);
-    System.out.println("Headers Map        : " + headersMap);
-    System.out.println("================================");
+    // Excel paths + sheet names
+    private static final String EXCEL_PATH = ConfigManager.get("excel.path"); 
+    private static final String AUTH_SHEET = "Auth";
+    private static final String TEST_SHEET = "TestCases";
 
-    // ---------------- Call API ---------------- //
-    OkHttpClient client = new OkHttpClient();
-    Request.Builder builder = new Request.Builder().url(url).get();
-    headersMap.forEach(builder::addHeader);
-    Request request = builder.build();
+    // Sensitive key from config
+    private static final String SENSITIVE_KEY = ConfigManager.get("sensitive.key");
 
-    List<Map<String, String>> apiData = new ArrayList<>();
-    try (Response response = client.newCall(request).execute()) {
-        int statusCode = response.code();
-        Assert.assertEquals("Unexpected status code!", 200, statusCode);
+    // Example query – adjust column names if needed
+    private static final String CUSTOMER_QUERY =
+            "SELECT CUST_NO, PROD_ID, PROD_COD FROM INTST02.CUD_PROD_RELN WHERE CUST_NO = ?";
 
-        String body = response.body() != null ? response.body().string() : "";
-        System.out.println("API Response: " + body);
+    @Test
+    public void validateCustomerAccounts() throws Exception {
 
-        // ---------------- Extract API data ---------------- //
-        List<Map<String, Object>> accounts = JsonPath.read(body, "$..accountInformationList[*]");
-        for (Map<String, Object> acc : accounts) {
-            Map<String, Object> details = (Map<String, Object>) acc.get("accountDetails");
+        // ---------- Step 1: Read credentials from Excel ----------
+        Map<String, String> authRow = ExcelUtils.readSheet(EXCEL_PATH, AUTH_SHEET).get(0);
+        String jwt = JwtFetcher.fetchStaffJwt(authRow.get("Username"));
 
-            String prodId = String.valueOf(details.get("sortCode")).trim()
-                    + String.valueOf(details.get("accountNumber")).trim();
-            String prodCode = String.valueOf(acc.get("productCode")).trim();
+        // ---------- Step 2: Read test data ----------
+        Map<String, String> testRow = ExcelUtils.readSheet(EXCEL_PATH, TEST_SHEET).get(0);
+        String custNo = testRow.get("CustomerIdentificationNumber");
+        String headerJson = testRow.get("Headers");
 
-            Map<String, String> record = new HashMap<>();
-            record.put("CUST_NO", custNo);
-            record.put("PROD_ID", prodId);
-            record.put("PROD_COD", prodCode);
-            apiData.add(record);
+        // ---------- Step 3: Prepare headers ----------
+        Map<String, String> headersMap = new HashMap<>(JsonPath.read(headerJson, "$"));
+        headersMap.put("X-HSBC-E2E-Trust-Token", jwt);
+        headersMap.put("X-HSBC-Sensitive-Data", custNo);
+
+        // ---------- Step 4: Build URL ----------
+        String url = ConfigManager.get("cust.url")
+                + "u/" + custNo + "/rel-acct?maxAccounts=0004";
+
+        // ---------- Step 5: Debug Logging ----------
+        System.out.println("--- DEBUG INFO ---");
+        System.out.println("JWT (first 50 chars): " + 
+                (jwt != null ? jwt.substring(0, Math.min(50, jwt.length())) + "..." : "null"));
+        System.out.println("Customer No : " + custNo);
+        System.out.println("Final URL   : " + url);
+        System.out.println("Headers Map : " + headersMap);
+        System.out.println("------------------");
+
+        // ---------- Step 6: Call API ----------
+        OkHttpClient client = new OkHttpClient();
+        Request.Builder builder = new Request.Builder().url(url).get();
+        headersMap.forEach(builder::addHeader);
+        Request request = builder.build();
+
+        List<Map<String, String>> apiData = new ArrayList<>();
+
+        try (Response response = client.newCall(request).execute()) {
+            int statusCode = response.code();
+            Assert.assertEquals("Unexpected status code!", 200, statusCode);
+
+            String body = response.body() != null ? response.body().string() : "";
+            System.out.println("API Response: " + body);
+
+            List<Map<String, Object>> accounts = JsonPath.read(body, "$..accountInformationList[*]");
+
+            // ---------- Step 7: Extract API Data ----------
+            for (Map<String, Object> acc : accounts) {
+                Map<String, Object> details = (Map<String, Object>) acc.get("accountDetails");
+
+                String prodId = String.valueOf(details.get("sortCode")).trim()
+                        + String.valueOf(details.get("accountNumber")).trim();
+                String prodCode = String.valueOf(acc.get("productCode")).trim();
+
+                Map<String, String> record = new HashMap<>();
+                record.put("CUST_NO", custNo);
+                record.put("PROD_ID", prodId);
+                record.put("PROD_COD", prodCode);
+
+                apiData.add(record);
+            }
         }
+
+        // ---------- Step 8: Fetch DB data ----------
+        List<Map<String, String>> dbData = fetchData(CUSTOMER_QUERY, custNo);
+
+        // ---------- Step 9: Compare Results ----------
+        System.out.println("DB  : " + dbData);
+        System.out.println("API : " + apiData);
+
+        Assert.assertTrue(
+                "API and DB results do not match!",
+                new HashSet<>(dbData).equals(new HashSet<>(apiData))
+        );
     }
-
-    // ---------------- Fetch DB data ---------------- //
-    List<Map<String, String>> dbData = fetchData(CUSTOMER_QUERY, custNo);
-
-    // ---------------- Compare Results ---------------- //
-    System.out.println("DB  : " + dbData);
-    System.out.println("API : " + apiData);
-
-    Assert.assertTrue(
-        "API and DB results do not match!",
-        new HashSet<>(dbData).equals(new HashSet<>(apiData))
-    );
 }
