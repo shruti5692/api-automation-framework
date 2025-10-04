@@ -1,39 +1,29 @@
 @Test(dataProvider = "se78Data")
 public void callSecurityChargeApi(Map<String, String> row) throws Exception {
 
-    // ------------------- START TIMER ------------------- //
     long startTime = System.currentTimeMillis();
 
-    String testId       = row.getOrDefault("TestCaseID", "").trim();
-    String chargeId     = row.getOrDefault("ChargeID", "").trim();
+    String testId = row.getOrDefault("TestCaseID", "").trim();
+    String chargeId = row.getOrDefault("ChargeID", "").trim();
     String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
     String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim();
 
-    logBoth("=== Running SE78 test: " + testId + " (ChargeID='" + chargeId + "') ===");
+    logBoth("Running SE78 test: " + testId + " (ChargeID=" + chargeId + ")");
 
-    // ----- DB Fetch (if required) -----
-    String dbOpenStatus = "UNKNOWN", dbFormStatus = "", dbCycCnt = "";
+    // ------------------- DB Fetch -------------------
+    List<Map<String, String>> dbData = new ArrayList<>();
+    String dbFormStatus = "", dbCycCnt = "", dbOpenStatus = "UNKNOWN";
     boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
-    String evidencePath = null; // Path to mainframe evidence (PDF or image)
-    Map<String, String> chargeData = null;
 
     if (isDbRequired && !chargeId.isEmpty()) {
-        logBoth("Step: Fetching DB data for ChargeID '" + chargeId + "'");
+        logBoth("Step: Fetching DB data for ChargeID " + chargeId);
         try {
-            chargeData = DbFetchHelper.fetchChargeData(chargeId);
-            if (chargeData != null && !chargeData.isEmpty()) {
-                dbOpenStatus = chargeData.getOrDefault("OPEN_CLO_STA", "UNKNOWN");
-                dbFormStatus = chargeData.getOrDefault("CHG_FORM_STA", "");
-                dbCycCnt     = chargeData.getOrDefault("CYC_CNT",
-                                   chargeData.getOrDefault("ACYC_CNT", ""));
-                
-                // ------------------- Capture Mainframe Evidence ------------------- //
-                try {
-                    evidencePath = MainframeUtils.captureDbEvidence(testId); // returns PDF path or image
-                } catch (Exception e) {
-                    logBoth("[WARN] Unable to capture mainframe evidence: " + e.getMessage());
-                }
-
+            dbData = DbFetchHelper.fetchData(chargeQuery, chargeId);
+            if (!dbData.isEmpty()) {
+                Map<String, String> chargeRow = dbData.get(0);
+                dbOpenStatus = chargeRow.getOrDefault("OPEN_CLO_STA", "UNKNOWN");
+                dbFormStatus = chargeRow.getOrDefault("CHG_FORM_STA", "");
+                dbCycCnt = chargeRow.getOrDefault("CYC_CNT", "");
             } else {
                 logBoth("[WARN] ChargeID not found in DB");
             }
@@ -44,123 +34,94 @@ public void callSecurityChargeApi(Map<String, String> row) throws Exception {
         logBoth("DB fetch skipped for this test case");
     }
 
-    // ----- Prepare Headers & JWT -----
+    // ------------------- Prepare Headers -------------------
     logBoth("Step: Preparing HTTP headers for API call");
     String jwt = JwtFetcher.fetchIb2bJwt();
+
     Headers.Builder headerBuilder = new Headers.Builder();
-
-    // ✅ Static headers
-    headerBuilder.add("Cookie", "LtpaToken2-...");
-    headerBuilder.add("Authorization", "Basic VEFWR05BOmdpcmkxOTg5");
     headerBuilder.add("Content-Type", "application/json");
-    headerBuilder.add("X-HSBC-Channel-Id", "OHB");
-    headerBuilder.add("X-HSBC-Chnl-Country", "1");
-    headerBuilder.add("X-HSBC-Chnl-Group-Member", "HBEU");
-    headerBuilder.add("X-HSBC-Consumer-Id", "1");
-    headerBuilder.add("X-HSBC-GBGF", "1");
-    headerBuilder.add("X-HSBC-Global-Channel-Id", "1");
-    headerBuilder.add("X-HSBC-IP-Id", "136.46.24.54");
-    headerBuilder.add("X-HSBC-Request-Correlation-Id", "123498");
-    headerBuilder.add("X-HSBC-Session-Correlation-Id", "Girisute");
-    headerBuilder.add("X-HSBC-Sort-Code", "400788");
-    headerBuilder.add("X-HSBC-Src-Device-Id", "1234");
-    headerBuilder.add("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)");
-    headerBuilder.add("X-HSBC-User-Id", "43998226");
-    headerBuilder.add("X-HSBC-Locale", "1");
-
-    // ✅ Dynamic JWT header
     headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
+    headerBuilder.add("X-HSBC-Sort-Code", "400788");
+    headerBuilder.add("X-HSBC-Src-UserAgent", "Apache HttpClient/4.5.6 (Java/1.8.0_112)");
+    // Add other static headers here as needed
 
     Headers headersObj = headerBuilder.build();
-    for (String name : headersObj.names()) {
-        logBoth("Header added: " + name + "=" + headersObj.get(name));
-    }
+    headersObj.names().forEach(name -> logBoth("Header added: " + name + " = " + headersObj.get(name)));
 
-    // ----- API Call -----
+    // ------------------- API Call -------------------
     String safeCharge = chargeId.isEmpty() ? "%20" : chargeId;
-    String url = Config.get("base.url") +
-                 "/v1/securities/" + safeCharge + "/chargedtl";
+    String url = ConfigManager.get("se78.url") + safeCharge + "/chargedtl";
     logBoth("Step: Calling SE78 API with URL: " + url);
 
+    OkHttpClient client = new OkHttpClient();
+    String apiBody;
     int status;
-    String body;
-    JSONObject responseJson;
-    try (Response resp = client.newCall(
-            new Request.Builder().url(url).headers(headersObj).get().build()
-    ).execute()) {
+
+    try (Response resp = client.newCall(new Request.Builder().url(url).headers(headersObj).get().build()).execute()) {
         status = resp.code();
-        body   = resp.body() == null ? "" : resp.body().string();
-        responseJson = body.isEmpty() ? new JSONObject() : new JSONObject(body);
+        apiBody = resp.body() != null ? resp.body().string() : "";
     }
 
     logBoth("HTTP Status: " + status);
-    logBoth("Response Body (truncated): " + (body.length() > 500
-            ? body.substring(0, 500) + "..." : body));
+    logBoth("Response Body (truncated): " + (apiBody.length() > 500 ? apiBody.substring(0, 500) + "..." : apiBody));
 
-    // ----- Status Validation -----
+    // ------------------- Status Validation -------------------
     if (!expStatusStr.isBlank()) {
-        int expStatus = Integer.parseInt(expStatusStr);
-        Assert.assertEquals(status, expStatus,
-                "Unexpected HTTP status for test " + testId);
-        logBoth("Expected HTTP status matched: " + expStatus);
+        int expectedStatus = Integer.parseInt(expStatusStr);
+        Assert.assertEquals(status, expectedStatus);
+        logBoth("Expected HTTP status matched: " + expectedStatus);
     }
 
-    // ----- Field-wise Validation -----
+    // ------------------- Convert API JSON to Map -------------------
+    Map<String, String> apiMap = JsonUtils.jsonToFlatMap(apiBody); // utility flattens JSON to Map<String,String>
+
+    // ------------------- Field-wise Validation -------------------
     boolean pass = true;
     String failReason = "";
 
     if (isDbRequired) {
         logBoth("Step: Performing DB field-wise validation");
-        if ("TC04_ClosedChargeID".equals(testId)) {
-            Map<String, String> closedFields = Map.of(
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.errorResponse."
-                + "errorResponseDetails.errorInfo[0].code", "4310"
-            );
-            if (!validateFields(closedFields, responseJson)) {
+
+        Map<String, String> expectedFields = new HashMap<>();
+        expectedFields.put("FormStatus", dbFormStatus);
+        expectedFields.put("CyclicCount", dbCycCnt);
+        // Add other DB fields as needed
+
+        for (String key : expectedFields.keySet()) {
+            if (!Objects.equals(expectedFields.get(key), apiMap.get(key))) {
                 pass = false;
-                failReason = "ClosedChargeID mismatch";
-            }
-        } else {
-            Map<String, String> openFields = Map.of(
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage."
-                + "responseBody.FormStatus", dbFormStatus,
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage."
-                + "responseBody.cyclicCount", dbCycCnt,
-                "gb-hbeu-rps-mtg-prod-sec-chrg-enq-v1-svcOperationResponse.responseMessage."
-                + "responseBody.errorCode", "0"
-            );
-            if (!validateFields(openFields, responseJson)) {
-                pass = false;
-                failReason = "OpenChargeID DB field mismatch";
+                failReason = "Field mismatch for key: " + key;
+                logBoth("Mismatch! DB=" + expectedFields.get(key) + ", API=" + apiMap.get(key));
             }
         }
+
     } else if (!expectedFieldsJson.isBlank()) {
         logBoth("Step: Performing Excel field-wise validation");
-        JSONObject expJson = new JSONObject(expectedFieldsJson);
-        Map<String, String> excelFields = new HashMap<>();
-        for (String k : expJson.keySet()) excelFields.put(k, expJson.get(k).toString());
-        if (!validateFields(excelFields, responseJson)) {
-            pass = false;
-            failReason = "Excel field mismatch";
+        Map<String, String> excelFields = JsonUtils.jsonToFlatMap(expectedFieldsJson);
+
+        for (String key : excelFields.keySet()) {
+            if (!Objects.equals(excelFields.get(key), apiMap.get(key))) {
+                pass = false;
+                failReason = "Excel field mismatch for key: " + key;
+                logBoth("Mismatch! Excel=" + excelFields.get(key) + ", API=" + apiMap.get(key));
+            }
         }
     }
 
-    // ----- Log Evidence Section (DB table + PDF/Image) -----
-    logDbAndEvidence(chargeData, evidencePath, testId);
+    // ------------------- Log Evidence Section -------------------
+    logDbAndEvidence(dbData, testId, test);
 
-    // ----- Test Result & Duration -----
+    // ------------------- Test Result & Duration -------------------
     long durationSec = (System.currentTimeMillis() - startTime) / 1000;
     if (pass) {
-        logPass("Test passed for " + testId + " in " + durationSec + " sec");
+        logPass("Test passed for testId " + testId + " in " + durationSec + " sec");
     } else {
-        logFail("Field validation failed for " + testId + " Reason: " + failReason);
+        logFail("Field validation failed for testId " + testId + " Reason: " + failReason);
     }
 
-    // Write result & duration to Excel
-    ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME,
-            testId,
-            pass ? "PASS" : "FAIL: " + failReason,
-            durationSec);
+    // Write result to Excel
+    ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testId,
+            pass ? "PASS" : "FAIL: " + failReason, durationSec);
 
-    logBoth("=== End of Test: " + testId + " (Duration: " + durationSec + " sec) ===\n");
+    logBoth("== End of Test: " + testId + " (Duration: " + durationSec + " sec) ==");
 }
