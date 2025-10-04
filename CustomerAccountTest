@@ -14,10 +14,10 @@ public void validateCustomerAccounts() throws Exception {
     Map<String, String> headersMap = new HashMap<>(JsonPath.read(headerJson, "$"));
     headersMap.put("X-HSBC-E2E-Trust-Token", jwt);
 
-    // Build sensitive header in required JSON format
+    // Sensitive header in required JSON format
     String sensitiveJson = String.format(
-        "[{\"key\":\"%s\",\"value\":\"%s\"}]",
-        SENSITIVE_KEY, custNo
+            "[{\"key\":\"%s\",\"value\":\"%s\"}]",
+            SENSITIVE_KEY, custNo
     );
     headersMap.put("X-HSBC-Sensitive-Data", sensitiveJson);
 
@@ -25,14 +25,8 @@ public void validateCustomerAccounts() throws Exception {
     String url = ConfigManager.get("cust.url")
             + "u/" + custNo + "/rel-acct?maxAccounts=0004";
 
-    // ------------------- DEBUG LOGS ------------------- //
-    System.out.println("========== DEBUG INFO ==========");
-    System.out.println("JWT (first 50 chars): " +
-            (jwt != null ? jwt.substring(0, Math.min(50, jwt.length())) + "..." : "null"));
-    System.out.println("Customer No: " + custNo);
     System.out.println("Final URL: " + url);
     System.out.println("Headers Map: " + headersMap);
-    System.out.println("================================");
 
     // ------------------- API CALL ------------------- //
     OkHttpClient client = new OkHttpClient();
@@ -49,20 +43,19 @@ public void validateCustomerAccounts() throws Exception {
         String body = response.body() != null ? response.body().string() : "";
         System.out.println("API Response: " + body);
 
-        // ------------------- Extract API Data ------------------- //
+        // Parse API response
         List<Map<String, Object>> accounts = JsonPath.read(body, "$..accountInformationList[*]");
         for (Map<String, Object> acc : accounts) {
             Map<String, Object> details = (Map<String, Object>) acc.get("accountDetails");
 
             String prodId = String.valueOf(details.get("sortCode")).trim()
                     + String.valueOf(details.get("accountNumber")).trim();
-
             String prodCode = String.valueOf(acc.get("productCode")).trim();
 
             Map<String, String> record = new HashMap<>();
             record.put("CUST_NO", custNo);
             record.put("PROD_ID", prodId);
-            record.put("PROD_CODE", prodCode);
+            record.put("PROD_COD", prodCode); // match DB column name
 
             apiData.add(record);
         }
@@ -72,21 +65,18 @@ public void validateCustomerAccounts() throws Exception {
     List<Map<String, String>> dbData = fetchData(CUSTOMER_QUERY, custNo);
 
     // ------------------- SUBSET COMPARISON ------------------- //
-    Set<Map<String, String>> dbSet = new HashSet<>(dbData);
-    Set<Map<String, String>> apiSet = new HashSet<>(apiData);
+    boolean allFound = true;
+    for (Map<String, String> apiRec : apiData) {
+        boolean match = dbData.stream().anyMatch(dbRec ->
+                apiRec.get("CUST_NO").equals(dbRec.get("CUST_NO")) &&
+                apiRec.get("PROD_ID").equals(dbRec.get("PROD_ID")) &&
+                apiRec.get("PROD_COD").equals(dbRec.get("PROD_COD"))
+        );
+        if (!match) {
+            allFound = false;
+            System.out.println("Missing API record in DB: " + apiRec);
+        }
+    }
 
-    boolean allApiInDb = dbSet.containsAll(apiSet);
-
-    System.out.println("DB Size: " + dbSet.size());
-    System.out.println("API Size: " + apiSet.size());
-    System.out.println("Extra in API (not in DB): " + diff(apiSet, dbSet));
-
-    Assert.assertTrue("Some API records not found in DB!", allApiInDb);
-}
-
-// Helper method for logging differences
-private static Set<Map<String, String>> diff(Set<Map<String, String>> a, Set<Map<String, String>> b) {
-    Set<Map<String, String>> result = new HashSet<>(a);
-    result.removeAll(b);
-    return result;
+    Assert.assertTrue("Some API records not found in DB!", allFound);
 }
