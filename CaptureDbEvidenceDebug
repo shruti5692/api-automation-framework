@@ -1,0 +1,158 @@
+// Debug-friendly, robust replacement + verification
+public static void captureDbEvidenceDebug(String chgId) throws Exception {
+    Path macroPath = Paths.get(MACRO_FILE);
+    if (!Files.exists(macroPath)) throw new RuntimeException("Macro file not found: " + macroPath);
+
+    // 1) Read raw bytes to detect BOM / encoding hints
+    byte[] raw = Files.readAllBytes(macroPath);
+    System.out.println("DEBUG: macro raw length = " + raw.length);
+    if (raw.length >= 3 && (raw[0] & 0xFF) == 0xEF && (raw[1] & 0xFF) == 0xBB && (raw[2] & 0xFF) == 0xBF) {
+        System.out.println("DEBUG: UTF-8 BOM detected");
+    } else if (raw.length >= 2 && (raw[0] & 0xFF) == 0xFF && (raw[1] & 0xFF) == 0xFE) {
+        System.out.println("DEBUG: UTF-16LE BOM detected");
+    } else {
+        System.out.println("DEBUG: No BOM detected (assume UTF-8)");
+    }
+
+    // 2) Read as UTF-8 safely (also normalize NBSP)
+    String macroContent = Files.readString(macroPath, StandardCharsets.UTF_8);
+    macroContent = macroContent.replace('\u00A0', ' '); // normalize non-breaking spaces if any
+    System.out.println("DEBUG: First 400 chars of macro:\n" +
+            (macroContent.length() > 400 ? macroContent.substring(0, 400) + "..." : macroContent));
+
+    // 3) Search for CHG_ID variants and show surrounding context
+    String needle = "CHG_ID";
+    int found = macroContent.indexOf(needle);
+    System.out.println("DEBUG: indexOf(\"" + needle + "\") = " + found);
+
+    // Print any lines that contain CHG_ID
+    String[] lines = macroContent.split("\\r?\\n");
+    for (int i = 0; i < lines.length; i++) {
+        if (lines[i].contains(needle)) {
+            System.out.println("DEBUG: Line " + (i + 1) + ": " + lines[i]);
+        }
+    }
+
+    // 4) Try literal replacement first (handles '<CHG_ID>' inside quotes)
+    String replaced = macroContent.replace("<CHG_ID>", chgId);
+    if (!replaced.equals(macroContent)) {
+        System.out.println("DEBUG: Literal '<CHG_ID>' replaced");
+    } else {
+        System.out.println("DEBUG: Literal '<CHG_ID>' not found -> trying flexible patterns");
+
+        // 5) Try a flexible regex that handles spaces/quotes/case variations e.g. '< CHG_ID >', '<CHG ID>' etc.
+        // This regex will match variations like '<CHG_ID>', '< CHG_ID >', '<CHG ID>', "'<CHG_ID>'", etc.
+        Pattern p = Pattern.compile("([\"']?)<\\s*CHG[_\\s]?ID\\s*>([\"']?)", Pattern.CASE_INSENSITIVE);
+        Matcher m = p.matcher(macroContent);
+
+        StringBuffer sb = new StringBuffer();
+        boolean any = false;
+        while (m.find()) {
+            any = true;
+            // preserve surrounding quotes if present
+            String leftQuote = m.group(1) == null ? "" : m.group(1);
+            String rightQuote = m.group(2) == null ? "" : m.group(2);
+            String replacement = leftQuote + chgId + rightQuote;
+            m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+        }
+        m.appendTail(sb);
+
+        if (any) {
+            replaced = sb.toString();
+            System.out.println("DEBUG: Regex-based replacement applied for CHG_ID variants");
+        } else {
+            System.out.println("DEBUG: Regex-based replacement found no matches either");
+            // As a last resort, try replacing any token that contains "CHG" + digits placeholder-like text:
+            Pattern p2 = Pattern.compile("<[^>]{1,40}CHG[^>]{0,40}>", Pattern.CASE_INSENSITIVE);
+            Matcher m2 = p2.matcher(macroContent);
+            if (m2.find()) {
+                System.out.println("DEBUG: Found a broader placeholder match: " + m2.group());
+                replaced = m2.replaceAll(chgId);
+            } else {
+                System.out.println("DEBUG: No broader placeholder found; nothing replaced");
+            }
+        }
+    }
+
+    // 6) Verify replacement by searching for CHG_ID and by searching for the injected value
+    boolean stillHasPlaceholder = replaced.contains("<CHG_ID>") || replaced.toLowerCase().contains("chg_id");
+    boolean containsInjected = replaced.contains(chgId);
+    System.out.println("DEBUG: after-replace contains '<CHG_ID>'? " + stillHasPlaceholder);
+    System.out.println("DEBUG: after-replace contains injected '" + chgId + "'? " + containsInjected);
+
+    // Optional: print the SQL line snippet around WHERE A.CHG_ID to confirm
+    int idxWhere = replaced.indexOf("A.CHG_ID");
+    if (idxWhere >= 0) {
+        int start = Math.max(0, idxWhere - 80);
+        int end = Math.min(replaced.length(), idxWhere + 120);
+        System.out.println("DEBUG: context around A.CHG_ID:\n" + replaced.substring(start, end));
+    }
+
+    // 7) Write the temp macro and re-read to guarantee filesystem persisted content
+    Path tempMacro = Paths.get(System.getProperty("java.io.tmpdir"),
+            "temp_macro_" + System.currentTimeMillis() + ".mac");
+    Files.writeString(tempMacro, replaced, StandardCharsets.UTF_8);
+    System.out.println("DEBUG: Temp macro written to: " + tempMacro.toAbsolutePath());
+
+    // Force file persistence (optional safety)
+    try (FileChannel fc = FileChannel.open(tempMacro, StandardOpenOption.WRITE)) {
+        fc.force(true);
+    } catch (Exception ex) {
+        System.out.println("DEBUG: unable to force file channel (not fatal): " + ex.getMessage());
+    }
+
+    // Read back temp macro to confirm content
+    String roundTrip = Files.readString(tempMacro, StandardCharsets.UTF_8);
+    System.out.println("DEBUG: temp macro contains injected? " + roundTrip.contains(chgId));
+    if (roundTrip.contains("<CHG_ID>")) {
+        System.out.println("DEBUG: placeholder still present in temp macro. sample:\n" +
+                (roundTrip.length() > 400 ? roundTrip.substring(0, 400) + "..." : roundTrip));
+        throw new RuntimeException("Replacement failed: placeholder still present.");
+    }
+
+    // 8) Make sure PCOMM won't ignore /R: by having a startup macro (manual step)
+    System.out.println("DEBUG: Ensure session has no startup macro configured. If it does, /R: may be ignored.");
+
+    // 9) Kill any existing PCOMM process (try common names)
+    try { Runtime.getRuntime().exec("taskkill /F /IM pcsws64.exe /T"); } catch (Exception ignored) {}
+    try { Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe /T"); } catch (Exception ignored) {}
+    try { Runtime.getRuntime().exec("taskkill /F /IM pcswin.exe /T"); } catch (Exception ignored) {}
+
+    Thread.sleep(1200);
+
+    // 10) Run PCOMM with /R:"path" (wrap path in quotes to be safe)
+    String rArg = "/R:\"" + tempMacro.toAbsolutePath().toString() + "\"";
+    ProcessBuilder pb = new ProcessBuilder(PCOMM_EXE, SESSION_FILE, rArg);
+    pb.redirectErrorStream(true);
+    Process process = pb.start();
+
+    // Read output for debugging
+    StringBuilder output = new StringBuilder();
+    try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            System.out.println("[PCOMM] " + line);
+            output.append(line).append("\n");
+        }
+    } catch (Exception e) {
+        System.out.println("DEBUG: error reading process output: " + e.getMessage());
+    }
+
+    boolean finished = process.waitFor(120, TimeUnit.SECONDS);
+    if (!finished) {
+        process.destroyForcibly();
+        System.out.println("DEBUG: process timed out; killed it.");
+        throw new RuntimeException("Macro execution timed out.");
+    }
+
+    int exitCode = process.exitValue();
+    System.out.println("DEBUG: PCOMM exit code = " + exitCode);
+    if (exitCode != 0) {
+        System.out.println("DEBUG: PCOMM output:\n" + output.toString());
+        throw new RuntimeException("Macro execution failed. Exit code: " + exitCode);
+    }
+
+    // Cleanup
+    try { Files.deleteIfExists(tempMacro); } catch (Exception ignore) {}
+    System.out.println("DEBUG: Macro run completed successfully for CHG_ID=" + chgId);
+}
