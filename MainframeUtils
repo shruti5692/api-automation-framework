@@ -1,68 +1,82 @@
-public static void captureDbEvidence(String chgId) throws Exception {
-    // Path to your base macro file (static one)
-    Path macroFile = Paths.get("src/test/resources/DBSnapshotMacro.mac");
+package com.framework.utils;
 
-    // ✅ Read the original macro content
-    String macroContent = Files.readString(macroFile);
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.concurrent.TimeUnit;
 
-    // ✅ Replace placeholder <CHG_ID> dynamically (case-insensitive)
-    macroContent = macroContent.replaceAll("(?i)<CHG_ID>", chgId);
+public class MainframeUtils {
 
-    // ✅ Create temp macro inside same resources directory
-    Path resourcesDir = macroFile.getParent();
-    Path tempMacro = resourcesDir.resolve("temp_macro_" + chgId + ".mac");
-    Files.writeString(tempMacro, macroContent);
+    private static final String PCOMM_EXE   = "C:\\Program Files (x86)\\IBM\\Personal Communications\\pcsws.exe";
+    private static final String SESSION_FILE = "C:\\Users\\45453759\\Desktop\\Session A.ws";
+    private static final String BASE_MACRO   = "C:\\Users\\45453759\\IdeaProjects\\api-automation-framework\\src\\test\\resources\\DBSnapshotMacro.mac";
 
-    System.out.println("=== Starting PCOMM Macro Execution ===");
-    System.out.println("Charge ID: " + chgId);
-    System.out.println("Temp Macro File: " + tempMacro);
+    public static void captureDbEvidence(String chgId) throws Exception {
+        // === STEP 1: Read macro template ===
+        String macroContent = Files.readString(Paths.get(BASE_MACRO), StandardCharsets.UTF_8);
+        if (!macroContent.contains("<CHG_ID>"))
+            throw new IllegalStateException("Macro template does not contain placeholder <CHG_ID>");
 
-    // ✅ Verify session file exists
-    if (!Files.exists(Paths.get(SESSION_FILE)))
-        throw new RuntimeException("Session file not found: " + SESSION_FILE);
+        // === STEP 2: Inject charge ID dynamically ===
+        String injectedMacro = macroContent.replace("<CHG_ID>", chgId);
 
-    // ✅ Kill any running PCOMM processes before starting
-    try {
-        Process killProcess = Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe");
-        killProcess.waitFor(3, TimeUnit.SECONDS);
-        System.out.println("✅ Killed existing PCOMM instances");
-    } catch (Exception e) {
-        System.out.println("[WARN] Failed to kill existing PCOMM: " + e.getMessage());
-    }
+        // === STEP 3: Write temp macro ===
+        Path tempMacro = Paths.get(System.getProperty("java.io.tmpdir"), "temp_macro_" + chgId + ".mac");
+        Files.writeString(tempMacro, injectedMacro, StandardCharsets.UTF_8);
 
-    // ✅ Launch PCOMM with the dynamic macro from resources
-    ProcessBuilder pb = new ProcessBuilder(
-            PCOMM_EXE,
-            SESSION_FILE,
-            "/R:" + tempMacro.toAbsolutePath().toString()
-    );
-    pb.redirectErrorStream(true);
-    Process process = pb.start();
+        System.out.println("=== MAINFRAME MACRO EXECUTION ===");
+        System.out.println("Charge ID: " + chgId);
+        System.out.println("Temp macro created at: " + tempMacro);
 
-    try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-        String line;
-        while ((line = reader.readLine()) != null) {
-            System.out.println("[PCOMM] " + line);
+        // === STEP 4: Create a .bat launcher ===
+        Path batFile = Paths.get(System.getProperty("java.io.tmpdir"), "run_pcomm_" + chgId + ".bat");
+        String batContent = String.join("\r\n",
+                "@echo off",
+                "setlocal",
+                "echo Running PCOMM for CHG_ID=" + chgId,
+                "start \"\" \"" + PCOMM_EXE + "\" \"" + SESSION_FILE + "\" /H /R:" + tempMacro,
+                "exit /b"
+        );
+        Files.writeString(batFile, batContent, StandardCharsets.UTF_8);
+
+        // === STEP 5: Kill any old sessions before launching ===
+        try {
+            Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe");
+            Thread.sleep(2000);
+        } catch (Exception ignore) {}
+
+        // === STEP 6: Run the .bat launcher ===
+        ProcessBuilder pb = new ProcessBuilder("cmd.exe", "/c", batFile.toString());
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null)
+                System.out.println("[PCOMM] " + line);
         }
-    }
 
-    boolean finished = process.waitFor(90, TimeUnit.SECONDS);
-    if (!finished) {
-        process.destroyForcibly();
-        throw new RuntimeException("⏰ Macro timed out after 90 seconds for CHG_ID: " + chgId);
-    }
+        // === STEP 7: Wait for macro to finish and evidence capture ===
+        boolean finished = process.waitFor(120, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new RuntimeException("PCOMM macro execution timed out");
+        }
 
-    int exitCode = process.exitValue();
-    if (exitCode != 0)
-        throw new RuntimeException("❌ Macro failed with exit code " + exitCode);
+        Thread.sleep(5000); // Allow final screenshot to save
 
-    System.out.println("✅ Macro executed successfully for ChargeID: " + chgId);
+        // === STEP 8: Close PCOMM safely ===
+        try {
+            Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe");
+            System.out.println("Closed PCOMM after evidence capture.");
+        } catch (Exception e) {
+            System.out.println("Warning: Could not close PCOMM - " + e.getMessage());
+        }
 
-    // ✅ Clean up temp macro
-    try {
+        // === STEP 9: Cleanup ===
         Files.deleteIfExists(tempMacro);
-        System.out.println("🧹 Deleted temp macro: " + tempMacro);
-    } catch (Exception e) {
-        System.out.println("[WARN] Could not delete temp macro: " + e.getMessage());
+        Files.deleteIfExists(batFile);
+
+        System.out.println("=== Evidence captured successfully for CHG_ID " + chgId + " ===");
     }
 }
