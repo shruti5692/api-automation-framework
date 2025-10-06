@@ -14,69 +14,63 @@ public class MainframeUtils {
     public static void captureDbEvidence(String chgId) throws Exception {
         // === STEP 1: Read macro template ===
         String macroContent = Files.readString(Paths.get(BASE_MACRO), StandardCharsets.UTF_8);
-        if (!macroContent.contains("<CHG_ID>"))
+        if (!macroContent.contains("<CHG_ID>")) {
             throw new IllegalStateException("Macro template does not contain placeholder <CHG_ID>");
+        }
 
-        // === STEP 2: Inject charge ID dynamically ===
+        // === STEP 2: Inject CHG_ID dynamically ===
         String injectedMacro = macroContent.replace("<CHG_ID>", chgId);
 
-        // === STEP 3: Write temp macro ===
+        // === STEP 3: Write a temp macro ===
         Path tempMacro = Paths.get(System.getProperty("java.io.tmpdir"), "temp_macro_" + chgId + ".mac");
         Files.writeString(tempMacro, injectedMacro, StandardCharsets.UTF_8);
-
-        System.out.println("=== MAINFRAME MACRO EXECUTION ===");
-        System.out.println("Charge ID: " + chgId);
         System.out.println("Temp macro created at: " + tempMacro);
 
-        // === STEP 4: Create a .bat launcher ===
-        Path batFile = Paths.get(System.getProperty("java.io.tmpdir"), "run_pcomm_" + chgId + ".bat");
-        String batContent = String.join("\r\n",
-                "@echo off",
-                "setlocal",
-                "echo Running PCOMM for CHG_ID=" + chgId,
-                "start \"\" \"" + PCOMM_EXE + "\" \"" + SESSION_FILE + "\" /H /R:" + tempMacro,
-                "exit /b"
-        );
-        Files.writeString(batFile, batContent, StandardCharsets.UTF_8);
-
-        // === STEP 5: Kill any old sessions before launching ===
+        // === STEP 4: Kill any existing PCOMM sessions ===
         try {
             Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe");
             Thread.sleep(2000);
         } catch (Exception ignore) {}
 
-        // === STEP 6: Run the .bat launcher ===
-        ProcessBuilder pb = new ProcessBuilder("cmd.exe", "/c", batFile.toString());
+        // === STEP 5: Run PCOMM directly with session and macro ===
+        String command = String.format("\"%s\" \"%s\" /H /R:%s",
+                PCOMM_EXE, SESSION_FILE, tempMacro.toAbsolutePath());
+        System.out.println("Executing: " + command);
+
+        ProcessBuilder pb = new ProcessBuilder("cmd.exe", "/c", command);
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
-            while ((line = reader.readLine()) != null)
+            while ((line = reader.readLine()) != null) {
                 System.out.println("[PCOMM] " + line);
+            }
         }
 
-        // === STEP 7: Wait for macro to finish and evidence capture ===
-        boolean finished = process.waitFor(120, TimeUnit.SECONDS);
-        if (!finished) {
+        // === STEP 6: Wait until macro finishes ===
+        boolean completed = process.waitFor(120, TimeUnit.SECONDS);
+        if (!completed) {
             process.destroyForcibly();
-            throw new RuntimeException("PCOMM macro execution timed out");
+            throw new RuntimeException("Macro execution timed out.");
         }
 
-        Thread.sleep(5000); // Allow final screenshot to save
+        // === STEP 7: Give extra few seconds for screenshot saving ===
+        Thread.sleep(5000);
 
-        // === STEP 8: Close PCOMM safely ===
+        // === STEP 8: Force close PCOMM after evidence capture ===
         try {
             Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe");
-            System.out.println("Closed PCOMM after evidence capture.");
+            System.out.println("Closed PCOMM after capture.");
         } catch (Exception e) {
-            System.out.println("Warning: Could not close PCOMM - " + e.getMessage());
+            System.out.println("Warning: Couldn't close PCOMM - " + e.getMessage());
         }
 
-        // === STEP 9: Cleanup ===
+        // === STEP 9: Delete temp macro ===
         Files.deleteIfExists(tempMacro);
-        Files.deleteIfExists(batFile);
+        System.out.println("Deleted temp macro: " + tempMacro);
 
-        System.out.println("=== Evidence captured successfully for CHG_ID " + chgId + " ===");
+        System.out.println("✅ Evidence captured successfully for CHG_ID " + chgId);
     }
 }
