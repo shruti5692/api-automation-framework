@@ -63,4 +63,6 @@ public static void captureDbEvidence(String chgId) throws Exception {
         Files.deleteIfExists(tempMacro);
         System.out.println("🧹 Deleted temp macro: " + tempMacro);
     } catch (Exception e) {
-        System.out.println("[WARN]
+        System.out.println("[WARN] Could not delete temp macro: " + e.getMessage());
+    }
+}
