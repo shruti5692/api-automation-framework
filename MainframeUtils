@@ -1,76 +1,70 @@
-package com.framework.utils;
+public static void captureDbEvidence(String chgId) throws Exception {
+    // === Step 1: Read base macro ===
+    String macroContent = Files.readString(Paths.get(MACRO_FILE));
 
-import java.io.*;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
-import java.util.concurrent.TimeUnit;
+    // === Step 2: Replace CHG_ID dynamically ===
+    macroContent = macroContent.replaceAll("(?i)(A\\s*\\.\\s*CHG_ID\\s*=\\s*')([^']+)(')", "$1" + chgId + "$3");
 
-public class MainframeUtils {
+    // === Step 3: Create unique temp macro ===
+    Path tempMacro = Paths.get(System.getProperty("java.io.tmpdir"),
+            "temp_macro_" + System.currentTimeMillis() + ".mac");
+    Files.writeString(tempMacro, macroContent);
 
-    private static final String PCOMM_EXE   = "C:\\Program Files (x86)\\IBM\\Personal Communications\\pcsws.exe";
-    private static final String SESSION_FILE = "C:\\Users\\45453759\\Desktop\\Session A.ws";
-    private static final String BASE_MACRO   = "C:\\Users\\45453759\\IdeaProjects\\api-automation-framework\\src\\test\\resources\\DBSnapshotMacro.mac";
+    System.out.println("=== Starting PCOMM Macro Execution ===");
+    System.out.println("Charge ID: " + chgId);
+    System.out.println("Temp Macro File: " + tempMacro);
 
-    public static void captureDbEvidence(String chgId) throws Exception {
-        // === STEP 1: Read macro template ===
-        String macroContent = Files.readString(Paths.get(BASE_MACRO), StandardCharsets.UTF_8);
-        if (!macroContent.contains("<CHG_ID>")) {
-            throw new IllegalStateException("Macro template does not contain placeholder <CHG_ID>");
-        }
-
-        // === STEP 2: Inject CHG_ID dynamically ===
-        String injectedMacro = macroContent.replace("<CHG_ID>", chgId);
-
-        // === STEP 3: Write a temp macro ===
-        Path tempMacro = Paths.get(System.getProperty("java.io.tmpdir"), "temp_macro_" + chgId + ".mac");
-        Files.writeString(tempMacro, injectedMacro, StandardCharsets.UTF_8);
-        System.out.println("Temp macro created at: " + tempMacro);
-
-        // === STEP 4: Kill any existing PCOMM sessions ===
-        try {
-            Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe");
-            Thread.sleep(2000);
-        } catch (Exception ignore) {}
-
-        // === STEP 5: Run PCOMM directly with session and macro ===
-        String command = String.format("\"%s\" \"%s\" /H /R:%s",
-                PCOMM_EXE, SESSION_FILE, tempMacro.toAbsolutePath());
-        System.out.println("Executing: " + command);
-
-        ProcessBuilder pb = new ProcessBuilder("cmd.exe", "/c", command);
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                System.out.println("[PCOMM] " + line);
-            }
-        }
-
-        // === STEP 6: Wait until macro finishes ===
-        boolean completed = process.waitFor(120, TimeUnit.SECONDS);
-        if (!completed) {
-            process.destroyForcibly();
-            throw new RuntimeException("Macro execution timed out.");
-        }
-
-        // === STEP 7: Give extra few seconds for screenshot saving ===
-        Thread.sleep(5000);
-
-        // === STEP 8: Force close PCOMM after evidence capture ===
-        try {
-            Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe");
-            System.out.println("Closed PCOMM after capture.");
-        } catch (Exception e) {
-            System.out.println("Warning: Couldn't close PCOMM - " + e.getMessage());
-        }
-
-        // === STEP 9: Delete temp macro ===
-        Files.deleteIfExists(tempMacro);
-        System.out.println("Deleted temp macro: " + tempMacro);
-
-        System.out.println("✅ Evidence captured successfully for CHG_ID " + chgId);
+    if (!Files.exists(Paths.get(SESSION_FILE))) {
+        throw new RuntimeException("Session file not found: " + SESSION_FILE);
     }
+
+    // === Step 4: Kill any previous sessions ===
+    try {
+        Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe");
+        Thread.sleep(2000);
+    } catch (Exception ignore) {}
+
+    // === Step 5: Launch PCOMM session with macro ===
+    ProcessBuilder pb = new ProcessBuilder(
+            PCOMM_EXE,
+            SESSION_FILE,
+            "/H",                     // ✅ Hide splash screen
+            "/R:" + tempMacro.toString()  // ✅ Auto-run the temp macro
+    );
+
+    pb.redirectErrorStream(true);
+    Process process = pb.start();
+
+    // === Step 6: Log PCOMM output ===
+    try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            System.out.println("[PCOMM] " + line);
+        }
+    }
+
+    // === Step 7: Wait for macro completion ===
+    boolean completed = process.waitFor(90, TimeUnit.SECONDS);
+
+    if (!completed) {
+        System.out.println("⚠️ Macro timed out — closing PCOMM...");
+        process.destroyForcibly();
+    } else {
+        System.out.println("✅ Macro executed successfully for CHG_ID: " + chgId);
+    }
+
+    // === Step 8: Wait few seconds for screenshot save ===
+    Thread.sleep(5000);
+
+    // === Step 9: Close PCOMM automatically ===
+    try {
+        Runtime.getRuntime().exec("taskkill /F /IM pcsws.exe");
+        System.out.println("✅ Closed PCOMM window automatically.");
+    } catch (Exception e) {
+        System.out.println("⚠️ Could not close PCOMM: " + e.getMessage());
+    }
+
+    // === Step 10: Delete temp macro ===
+    Files.deleteIfExists(tempMacro);
+    System.out.println("🧹 Deleted temp macro: " + tempMacro);
 }
