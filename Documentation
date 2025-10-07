@@ -64,7 +64,19 @@ JWT token generation and validation
 Access control checks for secured endpoints
 
 
+// Dynamic JWT header
+headerBuilder.add("X-HSBC-E2E-Trust-Token", jwt);
 
+Headers headersObj = headerBuilder.build();
+
+// Log all headers except JWT
+for (String name : headersObj.names()) {
+    if (!name.equalsIgnoreCase("X-HSBC-E2E-Trust-Token")) {
+        LogBoth(msg: "Header added: " + name + "=" + headersObj.get(name));
+    } else {
+        LogBoth(msg: "Header added: " + name + "=<hidden>");
+    }
+}
 
 ---
 
