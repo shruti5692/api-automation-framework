@@ -1,0 +1,40 @@
+package com.framework.utils;
+
+import java.util.*;
+
+public class HeaderUtils {
+
+    public static Map<String, String> buildHeaders(String prodId) throws Exception {
+        Map<String, String> headers = new LinkedHashMap<>();
+
+        headers.put("X-HSBC-Locale", "en-GB");
+        headers.put("X-HSBC-Chal-CountryCode", "GB");
+        headers.put("X-HSBC-Chnl-Group-Member", "HBEU");
+        headers.put("X-HSBC-User-Id", "C12345678");
+        headers.put("X-HSBC-CAM-Level", "40");
+        headers.put("X-HSBC-Channel-Id", "OHB");
+        headers.put("X-HSBC-Src-Device-Id", "1234");
+        headers.put("X-HSBC-Session-Correlation-Id", "q2");
+        headers.put("X-HSBC-Src-UserAgent", "Apache HttpClient/4.5.6 (Java/1.8.0_112)");
+        headers.put("X-HSBC-Request-Correlation-Id", "shubham");
+        headers.put("X-HSBC-Consumer-id", "GBHBEU CMB.MOBILE");
+        headers.put("X-HSBC-IP-Id", "136.46.24.54");
+        headers.put("X-HSBC-Bene-Type", "RSP9");
+        headers.put("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2");
+        headers.put("X-HSBC-Client-Secret", "68C1516505514180bf211DA13396AD1C");
+        headers.put("X-HSBC-Sort-Code", "000001");
+        headers.put("X-HSBC-Operator-Service-Unit-Id", "400521");
+        headers.put("X-HSBC-Operator-Institution-id", "Z");
+        headers.put("x-forwarded-for", "1234");
+        headers.put("accept-language", "en");
+
+        // Dynamic sensitive data field
+        headers.put("X-HSBC-Sensitive-Data",
+                "[{\"key\":\"84d8987710d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7884\",\"value\":\"" + prodId + "\"}]");
+
+        // Dynamic JWT Token
+        headers.put("X-HSBC-E2E-Trust-Token", JwtFetcher.getToken());
+
+        return headers;
+    }
+}
