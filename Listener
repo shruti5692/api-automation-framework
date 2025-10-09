@@ -1,0 +1,40 @@
+package com.framework.core;
+
+import org.testng.IMethodInstance;
+import org.testng.IMethodInterceptor;
+import org.testng.ITestContext;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Combined annotation + listener that allows running only
+ * tests explicitly annotated with @RunThis.
+ *
+ * Simply mark your test methods with @RunThis,
+ * and only those will execute — no flags or config needed.
+ */
+@Retention(RetentionPolicy.RUNTIME)
+public @interface RunThis {
+    // Optional identifier (for logging/debugging)
+    String id() default "";
+
+    // Inner listener that activates automatically
+    class Filter implements IMethodInterceptor {
+        @Override
+        public List<IMethodInstance> intercept(List<IMethodInstance> methods, ITestContext context) {
+            List<IMethodInstance> runnable = new ArrayList<>();
+            for (IMethodInstance instance : methods) {
+                Method m = instance.getMethod().getConstructorOrMethod().getMethod();
+                if (m.isAnnotationPresent(RunThis.class)) {
+                    runnable.add(instance);
+                }
+            }
+            System.out.println("✅ Filtered tests to only those annotated with @RunThis → count: " + runnable.size());
+            return runnable.isEmpty() ? methods : runnable;
+        }
+    }
+}
