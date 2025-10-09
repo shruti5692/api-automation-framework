@@ -1,8 +1,7 @@
-package com.example.utils;
+package com.framework.utils;
 
 import java.net.URI;
 import java.net.http.*;
-
 import java.util.Map;
 
 public class ApiUtils {
@@ -11,7 +10,11 @@ public class ApiUtils {
             "https://digitaldev-int-rbwm.systems.uk.hsbc/cb-rps-05/gb-hbeu-rps-pap-acct-mainopts-dlts-enq-sct-internal-proxy/v1/acct/";
 
     public static int callPY22Endpoint(Map<String, String> row, String jwtToken) throws Exception {
-        String prodId = row.get("PROD_ID").trim();
+        String prodId = row.getOrDefault("PROD_ID", "").trim();
+        if (prodId.length() < 14) {
+            throw new IllegalArgumentException("Invalid PROD_ID: " + prodId);
+        }
+
         String branch = prodId.substring(0, 6);
         String account = prodId.substring(6);
         String url = BASE_URL + prodId + "/mainopts-dits";
@@ -36,7 +39,11 @@ public class ApiUtils {
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
         System.out.println("Response Status: " + response.statusCode());
-        System.out.println("Response Body: " + response.body().substring(0, Math.min(200, response.body().length())));
+
+        // Print truncated response for safety
+        String body = response.body();
+        System.out.println("Response Body (first 200 chars): " +
+                body.substring(0, Math.min(200, body.length())));
 
         return response.statusCode();
     }
