@@ -1,145 +1,30 @@
 package com.framework.utils;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.Map;
 
-/**
- * Utility class for calling APIs.
- * Specifically supports the PY22 API endpoint with dynamic iB2B JWT token and
- * Excel-driven request data.
- *
- * - Dynamically builds headers from static values + Excel fields.
- * - Extracts static "key" from the endpoint URL.
- * - Uses PROD_ID from Excel (or auto-composes from Branch + Account).
- * - Handles X-HSBC-Sensitive-Data header in correct JSON array format.
- */
 public class ApiUtils {
 
-    // -------------------- Endpoint Constants -------------------- //
-
-    /** Full example endpoint (contains the static key). */
-    private static final String FULL_ENDPOINT_EXAMPLE =
-            "https://digitaldev-int-rbwm.systems.uk.hsbc/"
-          + "cb-rps-05/gb-hbeu-rps-pap-acct-mainopts-dlts-enq-sct-internal-proxy/"
-          + "v1/acct/84d89877f0d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7884/mainopts-dits";
-
-    private static final String BASE_URL_PREFIX =
-            "https://digitaldev-int-rbwm.systems.uk.hsbc/"
-          + "cb-rps-05/gb-hbeu-rps-pap-acct-mainopts-dlts-enq-sct-internal-proxy/"
-          + "v1/acct/";
-
-    private static final String BASE_URL_SUFFIX = "/mainopts-dits";
-
-
-    // -------------------- Main Method -------------------- //
-
-    /**
-     * Calls the PY22 API endpoint.
-     *
-     * @param row       Excel row data (headers → values)
-     * @param jwtToken  dynamic iB2B token to be passed in X-HSBC-E2E-Trust-Token
-     * @return HTTP status code
-     */
-    public static int callPY22Endpoint(Map<String, String> row, String jwtToken) throws Exception {
-
-        // 1️⃣ Extract the static key from the sample endpoint URL
-        String staticKey;
-        {
-            String markerStart = "/acct/";
-            String markerEnd = "/mainopts-dits";
-            int start = FULL_ENDPOINT_EXAMPLE.indexOf(markerStart);
-            int end = FULL_ENDPOINT_EXAMPLE.indexOf(markerEnd);
-            if (start >= 0 && end > start) {
-                staticKey = FULL_ENDPOINT_EXAMPLE.substring(start + markerStart.length(), end);
-            } else {
-                throw new IllegalStateException("Unable to parse static key from endpoint example.");
-            }
-        }
-
-        // 2️⃣ Derive PROD_ID (value for sensitive data)
+    public static void runApiTest(Map<String, String> row) throws Exception {
+        String testCaseId = row.getOrDefault("TestCaseID", "").trim();
+        String endpoint = row.getOrDefault("Endpoint", "").trim();
         String prodId = row.getOrDefault("PROD_ID", "").trim();
-        String branch = row.getOrDefault("BranchNumber", "").trim();
-        String account = row.getOrDefault("AccountNumber", "").trim();
 
-        if (prodId.isEmpty()) {
-            if (!branch.isEmpty() && !account.isEmpty()) {
-                prodId = branch + account;
-            } else if (!branch.isEmpty()) {
-                prodId = branch;
-            } else if (!account.isEmpty()) {
-                prodId = account;
-            }
+        // 1️⃣ Prepare headers (via helper)
+        Map<String, String> headers = HeaderUtils.buildHeaders(prodId);
+
+        // 2️⃣ Fetch JWT token dynamically
+        headers.put("X-HSBC-E2E-Trust-Token", JwtFetcher.getToken());
+
+        // 3️⃣ Call API and validate
+        int actualStatus = HttpUtils.getStatus(endpoint, headers);
+        int expectedStatus = Integer.parseInt(row.getOrDefault("ExpectedStatus", "200"));
+
+        if (actualStatus != expectedStatus) {
+            throw new AssertionError(
+                "❌ Test " + testCaseId + " failed: Expected " + expectedStatus + " but got " + actualStatus
+            );
         }
 
-        if (prodId.isEmpty()) {
-            throw new IllegalArgumentException("❌ No PROD_ID, BranchNumber, or AccountNumber found in Excel row!");
-        }
-
-        // 3️⃣ Construct final URL (static key remains same)
-        String url = BASE_URL_PREFIX + staticKey + BASE_URL_SUFFIX;
-
-        // 4️⃣ Build Sensitive-Data header JSON
-        String sensitiveDataJson =
-                "[{\"key\":\"" + escapeJson(staticKey) + "\",\"value\":\"" + escapeJson(prodId) + "\"}]";
-
-        // 5️⃣ Create HTTP request
-        HttpClient client = HttpClient.newHttpClient();
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                // Required headers
-                .header("X-HSBC-Locale", "en GB")
-                .header("X-HSBC-Chal-CountryCode", "GB")
-                .header("X-HSBC-Chnl-Group-Member", "HBEU")
-                .header("X-HSBC-User-Id", "C12345678")
-                .header("X-HSBC-CAM-Level", "40")
-                .header("X-HSBC-Channel-Id", "OHB")
-                .header("X-HSBC-Src-Device-Id", "1234")
-                .header("X-HSBC-Session-Correlation-Id", "q2")
-                .header("X-HSBC-Src-UserAgent", "Apache HttpClient/4.5.6 (Java/1.8.0_112)")
-                .header("X-HSBC-Request-Correlation-Id", "shubham")
-                .header("X-HSBC-Consumer-id", "GBHBEU CMB.MOBILE")
-                .header("X-HSBC-IP-Id", "136.46.24.54")
-                .header("X-HSBC-Bene-Type", "RSP9")
-                .header("X-HSBC-E2E-Trust-Token", jwtToken)
-                .header("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2")
-                .header("X-HSBC-Client-Secret", "68C1516505514180bf211DA13396AD1C")
-                .header("X-HSBC-Sort-Code", "000001")
-                .header("X-HSBC-Operator-Service-Unit-Id", "400521")
-                .header("X-HSBC-Operator-Institution-id", "Z")
-                .header("x-forwarded-for", "1234")
-                .header("accept-language", "en")
-                .header("X-HSBC-Sensitive-Data", sensitiveDataJson)
-                .GET()
-                .build();
-
-        // 6️⃣ Send request & capture response
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-        System.out.println("\n=== PY22 API Call ===");
-        System.out.println("→ URL: " + url);
-        System.out.println("→ SensitiveData Header: " + sensitiveDataJson);
-        System.out.println("→ Response Status: " + response.statusCode());
-        System.out.println("→ Response Body (first 400 chars):\n" +
-                (response.body() == null ? "" :
-                        response.body().substring(0, Math.min(400, response.body().length()))));
-
-        return response.statusCode();
-    }
-
-
-    // -------------------- Helper -------------------- //
-
-    /** Simple JSON escaper for safe header formatting */
-    private static String escapeJson(String s) {
-        if (s == null) return "";
-        return s
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r");
+        System.out.println("✅ " + testCaseId + " passed (" + actualStatus + ")");
     }
 }
