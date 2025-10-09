@@ -6,25 +6,22 @@ public class ApiUtils {
 
     public static void runApiTest(Map<String, String> row) throws Exception {
         String testCaseId = row.getOrDefault("TestCaseID", "").trim();
-        String endpoint = row.getOrDefault("Endpoint", "").trim();
-        String prodId = row.getOrDefault("PROD_ID", "").trim();
+        String endpoint   = row.getOrDefault("Endpoint", "").trim();
+        String prodId     = row.getOrDefault("PROD_ID", "").trim();
+        String expStatus  = row.getOrDefault("ExpectedStatus", "200").trim();
 
-        // 1️⃣ Prepare headers (via helper)
         Map<String, String> headers = HeaderUtils.buildHeaders(prodId);
 
-        // 2️⃣ Fetch JWT token dynamically
-        headers.put("X-HSBC-E2E-Trust-Token", JwtFetcher.getToken());
+        long start = System.currentTimeMillis();
+        ApiResponse response = ApiClient.get(endpoint, headers);
+        long durationSec = (System.currentTimeMillis() - start) / 1000;
 
-        // 3️⃣ Call API and validate
-        int actualStatus = HttpUtils.getStatus(endpoint, headers);
-        int expectedStatus = Integer.parseInt(row.getOrDefault("ExpectedStatus", "200"));
-
-        if (actualStatus != expectedStatus) {
-            throw new AssertionError(
-                "❌ Test " + testCaseId + " failed: Expected " + expectedStatus + " but got " + actualStatus
-            );
+        if (String.valueOf(response.getStatusCode()).equals(expStatus)) {
+            System.out.println("✅ " + testCaseId + " passed — " + response.getStatusCode());
+            ExcelUtils.writeResultWithDuration("src/test/resources/testdata/PY22.xlsx", "PY22", testCaseId, "PASS", durationSec);
+        } else {
+            System.out.println("❌ " + testCaseId + " failed — Expected: " + expStatus + ", Actual: " + response.getStatusCode());
+            ExcelUtils.writeResultWithDuration("src/test/resources/testdata/PY22.xlsx", "PY22", testCaseId, "FAIL", durationSec);
         }
-
-        System.out.println("✅ " + testCaseId + " passed (" + actualStatus + ")");
     }
 }
