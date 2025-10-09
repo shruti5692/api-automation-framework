@@ -1,63 +1,87 @@
 package com.framework.tests;
 
+import com.framework.utils.ApiUtils;
 import com.framework.utils.ExcelUtils;
 import com.framework.utils.JwtFetcher;
-import com.framework.utils.ApiUtils;
-import org.testng.annotations.*;
+import org.testng.annotations.DataProvider;
+import org.testng.annotations.Test;
+import org.testng.SkipException;
 
-import java.util.*;
+import java.util.Map;
 
+/**
+ * Test class for PY22 API validation.
+ *
+ * - Reads input data from Excel (BranchNumber, AccountNumber, PROD_ID, etc.)
+ * - Dynamically inserts JWT token in header.
+ * - Calls ApiUtils to send API request.
+ * - Writes result (PASS/FAIL) + duration back to Excel.
+ * - Supports selective test execution by TestCaseID.
+ */
 public class PY22Test {
 
     private static final String EXCEL_PATH = "src/test/resources/testdata/PY22Data.xlsx";
     private static final String SHEET_NAME = "PY22";
-    private String jwtToken;
-    private List<Map<String, String>> allData;
 
-    @BeforeClass
-    public void setup() throws Exception {
-        System.out.println("========== PY22 Test Execution Started ==========");
-        jwtToken = JwtFetcher.getDynamicJwt();
-        System.out.println("✅ JWT fetched successfully");
-
-        // Read once and store
-        allData = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
-    }
-
+    /**
+     * Data provider for PY22 test cases.
+     */
     @DataProvider(name = "py22Data")
-    public Object[][] getData() {
-        String caseFilter = System.getProperty("caseId", "ALL").trim();
-        List<Object[]> filtered = new ArrayList<>();
-
-        for (Map<String, String> row : allData) {
-            if (caseFilter.equalsIgnoreCase("ALL") ||
-                caseFilter.equalsIgnoreCase(row.getOrDefault("TestCaseID", ""))) {
-                filtered.add(new Object[]{row});
-            }
-        }
-        return filtered.toArray(new Object[0][0]);
+    public Object[][] py22Data() {
+        return ExcelUtils.getTestData(EXCEL_PATH, SHEET_NAME);
     }
 
+    /**
+     * Executes PY22 API validation.
+     *
+     * @param row Excel row data (each column mapped as key-value)
+     */
     @Test(dataProvider = "py22Data")
-    public void callPY22Api(Map<String, String> row) throws Exception {
-        String testCaseId = row.getOrDefault("TestCaseID", "");
-        System.out.println("\n=== Running TestCase: " + testCaseId + " ===");
+    public void callPY22(Map<String, String> row) throws Exception {
+        String testId = row.getOrDefault("TestCaseID", "").trim();
+        String runFlag = row.getOrDefault("RunFlag", "Y").trim();
 
-        long start = System.currentTimeMillis();
-        int actualStatus = ApiUtils.callPY22Endpoint(row, jwtToken);
-        long duration = (System.currentTimeMillis() - start) / 1000;
+        // Skip if marked "N"
+        if (runFlag.equalsIgnoreCase("N")) {
+            System.out.println("⚠ Skipping test case: " + testId);
+            throw new SkipException("Test case skipped as per Excel flag");
+        }
 
-        String expectedStatus = row.getOrDefault("ExpectedStatus", "");
-        String result = (String.valueOf(actualStatus).equals(expectedStatus)) ? "PASS" : "FAIL";
+        // Log start
+        System.out.println("\n==============================");
+        System.out.println("Executing TestCaseID: " + testId);
+        System.out.println("==============================");
 
-        System.out.printf("Expected: %s | Actual: %s | Result: %s | Duration: %d sec%n",
-                expectedStatus, actualStatus, result, duration);
+        // Fetch JWT dynamically
+        String jwtToken = JwtFetcher.fetchToken();
 
-        ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testCaseId, result, duration);
-    }
+        // Record start time
+        long startTime = System.currentTimeMillis();
 
-    @AfterClass
-    public void tearDown() {
-        System.out.println("========== PY22 Test Execution Completed ==========");
+        // Call the API
+        int actualStatusCode = ApiUtils.callPY22Endpoint(row, jwtToken);
+
+        // Record duration
+        long durationSec = (System.currentTimeMillis() - startTime) / 1000;
+
+        // Compare expected vs actual
+        String expectedStatus = row.getOrDefault("ExpectedStatus", "").trim();
+        String result = expectedStatus.equals(String.valueOf(actualStatusCode)) ? "PASS" : "FAIL";
+
+        // Write result back to Excel
+        ExcelUtils.writeResultWithDuration(
+                EXCEL_PATH,
+                SHEET_NAME,
+                testId,
+                result,
+                durationSec
+        );
+
+        // Log summary
+        System.out.println("✅ TestCaseID: " + testId
+                + " | Expected: " + expectedStatus
+                + " | Actual: " + actualStatusCode
+                + " | Result: " + result
+                + " | Duration: " + durationSec + "s");
     }
 }
