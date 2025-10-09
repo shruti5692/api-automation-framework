@@ -1,87 +1,33 @@
 package com.framework.tests;
 
-import com.framework.utils.ApiUtils;
-import com.framework.utils.ExcelUtils;
-import com.framework.utils.JwtFetcher;
-import org.testng.annotations.DataProvider;
-import org.testng.annotations.Test;
-import org.testng.SkipException;
+import com.framework.core.RunThis;
+import com.framework.utils.*;
+import org.testng.annotations.*;
 
-import java.util.Map;
+import java.util.*;
 
-/**
- * Test class for PY22 API validation.
- *
- * - Reads input data from Excel (BranchNumber, AccountNumber, PROD_ID, etc.)
- * - Dynamically inserts JWT token in header.
- * - Calls ApiUtils to send API request.
- * - Writes result (PASS/FAIL) + duration back to Excel.
- * - Supports selective test execution by TestCaseID.
- */
+@Listeners(com.framework.core.RunThis.Filter.class)
 public class PY22Test {
 
-    private static final String EXCEL_PATH = "src/test/resources/testdata/PY22Data.xlsx";
+    private static final String EXCEL_PATH = "src/test/resources/testdata/PY22.xlsx";
     private static final String SHEET_NAME = "PY22";
 
-    /**
-     * Data provider for PY22 test cases.
-     */
     @DataProvider(name = "py22Data")
-    public Object[][] py22Data() {
-        return ExcelUtils.getTestData(EXCEL_PATH, SHEET_NAME);
+    public Object[][] py22Data() throws Exception {
+        List<Map<String, String>> data = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
+        Object[][] arr = new Object[data.size()][1];
+        for (int i = 0; i < data.size(); i++) arr[i][0] = data.get(i);
+        return arr;
     }
 
-    /**
-     * Executes PY22 API validation.
-     *
-     * @param row Excel row data (each column mapped as key-value)
-     */
+    @RunThis(id = "PY22_TC01")  // ✅ only this test will run
     @Test(dataProvider = "py22Data")
-    public void callPY22(Map<String, String> row) throws Exception {
-        String testId = row.getOrDefault("TestCaseID", "").trim();
-        String runFlag = row.getOrDefault("RunFlag", "Y").trim();
+    public void callPY22Api(Map<String, String> row) throws Exception {
+        ApiUtils.runApiTest(row);
+    }
 
-        // Skip if marked "N"
-        if (runFlag.equalsIgnoreCase("N")) {
-            System.out.println("⚠ Skipping test case: " + testId);
-            throw new SkipException("Test case skipped as per Excel flag");
-        }
-
-        // Log start
-        System.out.println("\n==============================");
-        System.out.println("Executing TestCaseID: " + testId);
-        System.out.println("==============================");
-
-        // Fetch JWT dynamically
-        String jwtToken = JwtFetcher.fetchToken();
-
-        // Record start time
-        long startTime = System.currentTimeMillis();
-
-        // Call the API
-        int actualStatusCode = ApiUtils.callPY22Endpoint(row, jwtToken);
-
-        // Record duration
-        long durationSec = (System.currentTimeMillis() - startTime) / 1000;
-
-        // Compare expected vs actual
-        String expectedStatus = row.getOrDefault("ExpectedStatus", "").trim();
-        String result = expectedStatus.equals(String.valueOf(actualStatusCode)) ? "PASS" : "FAIL";
-
-        // Write result back to Excel
-        ExcelUtils.writeResultWithDuration(
-                EXCEL_PATH,
-                SHEET_NAME,
-                testId,
-                result,
-                durationSec
-        );
-
-        // Log summary
-        System.out.println("✅ TestCaseID: " + testId
-                + " | Expected: " + expectedStatus
-                + " | Actual: " + actualStatusCode
-                + " | Result: " + result
-                + " | Duration: " + durationSec + "s");
+    @Test(dataProvider = "py22Data")
+    public void anotherApi(Map<String, String> row) throws Exception {
+        ApiUtils.runApiTest(row);  // 🚫 will be skipped automatically
     }
 }
