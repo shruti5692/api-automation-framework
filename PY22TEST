@@ -1,111 +1,63 @@
-package com.example.tests;
+package com.framework.tests;
 
+import com.framework.utils.ExcelUtils;
+import com.framework.utils.JwtFetcher;
+import com.framework.utils.ApiUtils;
 import org.testng.annotations.*;
+
 import java.util.*;
-import java.io.*;
-import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.*;
-import java.net.http.*;
-import java.net.*;
-import java.time.*;
 
 public class PY22Test {
 
     private static final String EXCEL_PATH = "src/test/resources/testdata/PY22Data.xlsx";
-    private static final String API_URL = "https://digitaldev-int-rbwm.systems.uk.hsbc/cb-rps-05/gb-hbeu-rps-pap-acct-mainopts-dlts-enq-sct-internal-proxy/v1/acct/";
-
+    private static final String SHEET_NAME = "PY22";
     private String jwtToken;
+    private List<Map<String, String>> allData;
 
     @BeforeClass
     public void setup() throws Exception {
-        // Generate or fetch JWT dynamically (replace this with your actual JWT service)
-        jwtToken = "YOUR_DYNAMIC_JWT_TOKEN_HERE";
-        System.out.println("✅ JWT generated successfully.");
+        System.out.println("========== PY22 Test Execution Started ==========");
+        jwtToken = JwtFetcher.getDynamicJwt();
+        System.out.println("✅ JWT fetched successfully");
+
+        // Read once and store
+        allData = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
     }
 
     @DataProvider(name = "py22Data")
-    public Iterator<Object[]> getData() throws Exception {
-        List<Object[]> data = new ArrayList<>();
-        try (FileInputStream fis = new FileInputStream(EXCEL_PATH);
-             XSSFWorkbook workbook = new XSSFWorkbook(fis)) {
-            XSSFSheet sheet = workbook.getSheetAt(0);
-            int rows = sheet.getPhysicalNumberOfRows();
+    public Object[][] getData() {
+        String caseFilter = System.getProperty("caseId", "ALL").trim();
+        List<Object[]> filtered = new ArrayList<>();
 
-            for (int i = 1; i < rows; i++) {
-                Row row = sheet.getRow(i);
-                if (row == null) continue;
-
-                Map<String, String> map = new LinkedHashMap<>();
-                map.put("TestCaseID", row.getCell(0).getStringCellValue());
-                map.put("BranchNumber", row.getCell(1).getStringCellValue());
-                map.put("AccountNumber", row.getCell(2).getStringCellValue());
-                map.put("ExpectedFields", row.getCell(3).getStringCellValue());
-                map.put("ErrorCode", row.getCell(4).getStringCellValue());
-                map.put("ExpectedStatus", row.getCell(5).getStringCellValue());
-                data.add(new Object[]{map});
+        for (Map<String, String> row : allData) {
+            if (caseFilter.equalsIgnoreCase("ALL") ||
+                caseFilter.equalsIgnoreCase(row.getOrDefault("TestCaseID", ""))) {
+                filtered.add(new Object[]{row});
             }
         }
-        return data.iterator();
+        return filtered.toArray(new Object[0][0]);
     }
 
     @Test(dataProvider = "py22Data")
     public void callPY22Api(Map<String, String> row) throws Exception {
-        String testCaseId = row.get("TestCaseID");
-        String acctNumber = row.get("AccountNumber");
+        String testCaseId = row.getOrDefault("TestCaseID", "");
         System.out.println("\n=== Running TestCase: " + testCaseId + " ===");
 
-        String url = API_URL + acctNumber + "/mainopts-dits";
-        HttpClient client = HttpClient.newHttpClient();
+        long start = System.currentTimeMillis();
+        int actualStatus = ApiUtils.callPY22Endpoint(row, jwtToken);
+        long duration = (System.currentTimeMillis() - start) / 1000;
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("X-HSBC-Locale", "en-GB")
-                .header("X-HSBC-Chal-CountryCode", "GB")
-                .header("X-HSBC-Chnl-Group-Member", "HBEU")
-                .header("X-HSBC-User-Id", "C12345678")
-                .header("X-HSBC-CAM-Level", "40")
-                .header("X-HSBC-Channel-Id", "OHB")
-                .header("X-HSBC-E2E-Trust-Token", jwtToken)
-                .header("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2")
-                .header("X-HSBC-Client-Secret", "68C1516505514180bf211DA13396AD1C")
-                .header("X-HSBC-Operator-Service-Unit-Id", row.get("BranchNumber"))
-                .header("accept-language", "en")
-                .GET()
-                .build();
+        String expectedStatus = row.getOrDefault("ExpectedStatus", "");
+        String result = (String.valueOf(actualStatus).equals(expectedStatus)) ? "PASS" : "FAIL";
 
-        Instant start = Instant.now();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        Instant end = Instant.now();
+        System.out.printf("Expected: %s | Actual: %s | Result: %s | Duration: %d sec%n",
+                expectedStatus, actualStatus, result, duration);
 
-        long duration = Duration.between(start, end).toSeconds();
-        int statusCode = response.statusCode();
-        String result = (statusCode == 200) ? "PASS" : "FAIL";
-
-        System.out.println("Response Code: " + statusCode);
-        System.out.println("Duration: " + duration + " sec");
-        System.out.println("Result: " + result);
-
-        writeResultToExcel(testCaseId, result, duration);
+        ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testCaseId, result, duration);
     }
 
-    private void writeResultToExcel(String testCaseId, String result, long duration) throws Exception {
-        try (FileInputStream fis = new FileInputStream(EXCEL_PATH);
-             XSSFWorkbook workbook = new XSSFWorkbook(fis)) {
-            XSSFSheet sheet = workbook.getSheetAt(0);
-            int rows = sheet.getPhysicalNumberOfRows();
-
-            for (int i = 1; i < rows; i++) {
-                Row row = sheet.getRow(i);
-                if (row == null) continue;
-                if (row.getCell(0).getStringCellValue().equals(testCaseId)) {
-                    row.createCell(6).setCellValue(result);
-                    row.createCell(7).setCellValue(duration);
-                }
-            }
-
-            try (FileOutputStream fos = new FileOutputStream(EXCEL_PATH)) {
-                workbook.write(fos);
-            }
-        }
+    @AfterClass
+    public void tearDown() {
+        System.out.println("========== PY22 Test Execution Completed ==========");
     }
 }
