@@ -1,0 +1,99 @@
+package com.framework.tests;
+
+import org.testng.annotations.Test;
+import java.util.*;
+import com.framework.utils.*;
+import io.restassured.response.Response;
+import static io.restassured.RestAssured.*;
+
+public class PY22Test extends BaseTest {
+
+    @Test(dataProvider = "py22Data", dataProviderClass = ExcelDataProvider.class)
+    public void callPY22Api(Map<String, String> row) throws Exception {
+
+        String testId = row.getOrDefault("TestCaseID", "").trim();
+        String valueFromExcel = row.getOrDefault("SensitiveDataValue", "").trim();
+
+        logBoth("=== Executing TestCase: " + testId + " ===");
+
+        // 🧠 Generate dynamic iB2B JWT Token
+        String jwtToken = JwtTokenService.generateIb2bToken();
+
+        // 🧩 Build headers dynamically
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("X-HSBC-Locale", "en GB");
+        headers.put("X-HSBC-Chal-CountryCode", "GB");
+        headers.put("X-HSBC-Chnl-Group-Member", "HBEU");
+        headers.put("X-HSBC-User-Id", "C12345678");
+        headers.put("X-HSBC-CAM-Level", "40");
+        headers.put("X-HSBC-Channel-Id", "OHB");
+        headers.put("X-HSBC-Src-Device-Id", "1234");
+        headers.put("X-HSBC-Session-Correlation-Id", "q2");
+        headers.put("X-HSBC-Src-UserAgent", "Apache HttpClient/4.5.6 (Java/1.8.0_112)");
+        headers.put("X-HSBC-Request-Correlation-Id", "shubham");
+        headers.put("X-HSBC-Consumer-id", "GBHBEU CMB.MOBILE");
+        headers.put("X-HSBC-IP-Id", "136.46.24.54");
+        headers.put("X-HSBC-Bene-Type", "RSP9");
+        headers.put("X-HSBC-E2E-Trust-Token", jwtToken);
+        headers.put("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2");
+        headers.put("X-HSBC-Client-Secret", "68C1516505514180bf211DA13396AD1C");
+        headers.put("X-HSBC-Sort-Code", "000001");
+        headers.put("X-HSBC-Operator-Service-Unit-Id", "400521");
+        headers.put("X-HSBC-Operator-Institution-id", "Z");
+        headers.put("x-forwarded-for", "1234");
+        headers.put("accept-language", "en");
+
+        // 🔐 Build X-HSBC-Sensitive-Data dynamically
+        String sensitiveDataJson = "[{\"key\":\"84d8987710d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7884\",\"value\":\"" 
+                                    + valueFromExcel + "\"}]";
+        headers.put("X-HSBC-Sensitive-Data", sensitiveDataJson);
+
+        // ✅ Log headers table in report
+        logHeadersInTable(headers);
+
+        // 🌐 API URL
+        String apiUrl = "https://digitaldev-int-rbwm.systems.uk.hsbc/"
+                + "cb-rps-05/gb-hbeu-rps-pap-acct-mainopts-dlts-enq-sct-internal-proxy/"
+                + "v1/acct/84d89877f0d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7884/mainopts-dits";
+
+        logBoth("Hitting API: " + apiUrl);
+
+        // 🚀 Send GET Request
+        Response response = given()
+                .headers(headers)
+                .when()
+                .get(apiUrl)
+                .then()
+                .extract()
+                .response();
+
+        // 📋 Log response in report
+        logBoth("Response Code: " + response.statusCode());
+        logBoth("Response Body:\n" + response.prettyPrint());
+
+        // ✅ Validation example
+        if (response.statusCode() != 200) {
+            logBoth("[FAIL] API did not return 200 OK. Actual: " + response.statusCode());
+        } else {
+            logBoth("[PASS] API returned 200 OK successfully!");
+        }
+
+        logBoth("=== Test Completed: " + testId + " ===");
+    }
+
+    /**
+     * Helper: log headers in Extent Report as table
+     */
+    private void logHeadersInTable(Map<String, String> headers) {
+        StringBuilder table = new StringBuilder();
+        table.append("<table border='1' cellspacing='0' cellpadding='3'>");
+        table.append("<tr><th>Header</th><th>Value</th></tr>");
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            String key = entry.getKey();
+            String val = key.equals("X-HSBC-E2E-Trust-Token") ? "[JWT Hidden]" : entry.getValue();
+            table.append("<tr><td>").append(key).append("</td><td>").append(val).append("</td></tr>");
+        }
+        table.append("</table>");
+        logBoth("Headers Used:<br>" + table);
+    }
+}
