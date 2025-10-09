@@ -1,40 +1,48 @@
-package com.framework.core;
+package com.framework.utils;
 
-import io.restassured.response.Response;
-import io.restassured.specification.RequestSpecification;
+import okhttp3.*;
 
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
-import static io.restassured.RestAssured.given;
-
-/**
- * Generic API client. Accepts full URL, method, headers map, body, and optional basic auth.
- */
 public class ApiClient {
 
-    public static Response send(String fullUrl, String method, Map<String, String> headers, String body,
-                                String username, String password) {
-        RequestSpecification req = given().relaxedHTTPSValidation();
+    private static final OkHttpClient client = new OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build();
 
+    /**
+     * Generic GET call with headers.
+     */
+    public static ApiResponse get(String url, Map<String, String> headers) throws Exception {
+        Request.Builder builder = new Request.Builder().url(url);
         if (headers != null) {
-            headers.forEach(req::header);
+            headers.forEach(builder::addHeader);
+        }
+        Request request = builder.get().build();
+        try (Response response = client.newCall(request).execute()) {
+            String body = response.body() != null ? response.body().string() : "";
+            return new ApiResponse(response.code(), body);
+        }
+    }
+
+    /**
+     * Generic POST call with JSON body and headers.
+     */
+    public static ApiResponse post(String url, String jsonBody, Map<String, String> headers) throws Exception {
+        MediaType JSON = MediaType.parse("application/json");
+        RequestBody body = RequestBody.create(jsonBody, JSON);
+
+        Request.Builder builder = new Request.Builder().url(url).post(body);
+        if (headers != null) {
+            headers.forEach(builder::addHeader);
         }
 
-        if (username != null && !username.isEmpty()) {
-            req.auth().preemptive().basic(username, password == null ? "" : password);
-        }
-
-        if (body != null && !body.trim().isEmpty() && !"GET".equalsIgnoreCase(method)) {
-            req.body(body);
-        }
-
-        switch (method.toUpperCase()) {
-            case "GET": return req.get(fullUrl);
-            case "POST": return req.post(fullUrl);
-            case "PUT": return req.put(fullUrl);
-            case "DELETE": return req.delete(fullUrl);
-            case "PATCH": return req.patch(fullUrl);
-            default: return req.request(method.toUpperCase(), fullUrl);
+        Request request = builder.build();
+        try (Response response = client.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            return new ApiResponse(response.code(), responseBody);
         }
     }
 }
