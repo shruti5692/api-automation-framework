@@ -55,6 +55,30 @@ public class PY22Tests {
         else if (!accNum.isEmpty()) prodId = accNum;
 
         System.out.println("PROD_ID constructed: " + prodId);
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
+// ...
+
+// Prepare headers
+Headers.Builder headerBuilder = new Headers.Builder();
+headerBuilder.add("Content-Type", "application/json");
+headerBuilder.add("X-HSBC-Channel-Id", "OHB");
+headerBuilder.add("X-HSBC-Request-Correlation-Id", "123498");
+headerBuilder.add("X-HSBC-E2E-Trust-Token", JwtFetcher.generateToken());
+headerBuilder.add("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)");
+headerBuilder.add("X-HSBC-User-Id", "43998226");
+
+// Add Basic Auth header with username and password
+String username = "tavong";
+String password = "Raa@1126";
+String auth = username + ":" + password;
+String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes(StandardCharsets.UTF_8));
+headerBuilder.add("Authorization", "Basic " + encodedAuth);
+
+Headers headers = headerBuilder.build();
+
+// Use these headers in your OkHttp request...
 
         // Prepare headers
         Headers.Builder headerBuilder = new Headers.Builder();
