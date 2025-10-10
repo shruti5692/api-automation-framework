@@ -1,42 +1,34 @@
-package com.framework.utils;
+package com.framework.tests;
 
-import java.util.*;
+import com.framework.core.TestExecutor;
+import com.framework.utils.ExcelUtils;
+import org.testng.annotations.Test;
 
-public class HeaderUtils {
+import java.util.Map;
 
-    /**
-     * Builds the header map dynamically.
-     * Automatically inserts JWT token in Trust-Token header.
-     */
-    public static Map<String, String> buildHeaders(String jwt, String prodId) {
-        Map<String, String> headers = new LinkedHashMap<>();
+public class PY22Tests {
 
-        headers.put("X-HSBC-Locale", "en-GB");
-        headers.put("X-HSBC-Chal-CountryCode", "GB");
-        headers.put("X-HSBC-Chnl-Group-Member", "HBEU");
-        headers.put("X-HSBC-User-Id", "C12345678");
-        headers.put("X-HSBC-CAM-Level", "40");
-        headers.put("X-HSBC-Channel-Id", "OHB");
-        headers.put("X-HSBC-Src-Device-Id", "1234");
-        headers.put("X-HSBC-Session-Correlation-Id", "q2");
-        headers.put("X-HSBC-Src-UserAgent", "Apache HttpClient/4.5.6 (Java/1.8.0_112)");
-        headers.put("X-HSBC-Request-Correlation-Id", "shubham");
-        headers.put("X-HSBC-Consumer-id", "GBHBEU CMB.MOBILE");
-        headers.put("X-HSBC-IP-Id", "136.46.24.54");
-        headers.put("X-HSBC-Bene-Type", "RSP9");
-        headers.put("X-HSBC-E2E-Trust-Token", jwt);
-        headers.put("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2");
-        headers.put("X-HSBC-Client-Secret", "68C1516505514180bf211DA13396AD1C");
-        headers.put("X-HSBC-Sort-Code", "000001");
-        headers.put("X-HSBC-Operator-Service-Unit-Id", "400521");
-        headers.put("X-HSBC-Operator-Institution-id", "Z");
-        headers.put("x-forwarded-for", "1234");
-        headers.put("accept-language", "en");
+    private static final String EXCEL_PATH = "src/test/resources/testdata.xlsx";
+    private static final String SHEET = "PY22";
 
-        // Sensitive Data with PROD_ID
-        headers.put("X-HSBC-Sensitive-Data",
-                "[{\"key\":\"84d8987710d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7884\",\"value\":\"" + prodId + "\"}]");
+    @Test(description = "TC01 - Valid PROD_ID")
+    public void TC01_Valid_PROD_ID() throws Exception {
+        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET,
+                "TC01_SC01_PY22_Valid_PROD_ID");
+        TestExecutor.runCase(data);
+    }
 
-        return headers;
+    @Test(description = "TC02 - Mandatory Field Validation (Branch number)")
+    public void TC02_MandatoryField_Validation_BranchNumber() throws Exception {
+        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET,
+                "TC02_SC01_PY22_MandatoryField_Validation_BranchNumber");
+        TestExecutor.runCase(data);
+    }
+
+    @Test(description = "TC03 - Mandatory Field Validation (Account number)")
+    public void TC03_MandatoryField_Validation_AccountNumber() throws Exception {
+        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET,
+                "TC03_SC01_PY22_MandatoryField_Validation_Accountnumber");
+        TestExecutor.runCase(data);
     }
 }
