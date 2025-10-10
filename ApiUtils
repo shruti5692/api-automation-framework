@@ -1,27 +1,107 @@
 package com.framework.utils;
 
-import java.util.Map;
+import okhttp3.*;
+import java.util.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
+/**
+ * Generic API utility — calls any HTTP endpoint
+ * using dynamic headers/body from Excel, and returns structured results.
+ *
+ * Responsibilities:
+ * ✅ Build request (URL, headers, body)
+ * ✅ Execute request
+ * ✅ Return response (status + flattened JSON body)
+ *
+ * Works seamlessly with:
+ * - ExcelUtils → for reading data
+ * - JsonUtils  → for flattening JSON
+ */
 public class ApiUtils {
 
-    public static void runApiTest(Map<String, String> row) throws Exception {
-        String testCaseId = row.getOrDefault("TestCaseID", "").trim();
-        String endpoint   = row.getOrDefault("Endpoint", "").trim();
-        String prodId     = row.getOrDefault("PROD_ID", "").trim();
-        String expStatus  = row.getOrDefault("ExpectedStatus", "200").trim();
+    private static final OkHttpClient client = new OkHttpClient();
+    private static final ObjectMapper mapper = new ObjectMapper();
 
-        Map<String, String> headers = HeaderUtils.buildHeaders(prodId);
+    /**
+     * Calls a REST API using the given test data row.
+     *
+     * @param row Excel data row (from ExcelUtils.readSheet)
+     * @param jwtToken dynamic JWT token (for headers)
+     * @return Map with keys: "statusCode", "rawBody", "response"
+     */
+    public static Map<String, Object> callApi(Map<String, String> row, String jwtToken) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            // 1️⃣ Extract URL (mandatory)
+            String url = row.getOrDefault("URL", "").trim();
+            if (url.isEmpty()) throw new IllegalArgumentException("URL is missing in Excel row");
 
-        long start = System.currentTimeMillis();
-        ApiResponse response = ApiClient.get(endpoint, headers);
-        long durationSec = (System.currentTimeMillis() - start) / 1000;
+            // 2️⃣ Extract method (GET/POST/PUT...) — default GET
+            String method = row.getOrDefault("Method", "GET").trim().toUpperCase();
 
-        if (String.valueOf(response.getStatusCode()).equals(expStatus)) {
-            System.out.println("✅ " + testCaseId + " passed — " + response.getStatusCode());
-            ExcelUtils.writeResultWithDuration("src/test/resources/testdata/PY22.xlsx", "PY22", testCaseId, "PASS", durationSec);
-        } else {
-            System.out.println("❌ " + testCaseId + " failed — Expected: " + expStatus + ", Actual: " + response.getStatusCode());
-            ExcelUtils.writeResultWithDuration("src/test/resources/testdata/PY22.xlsx", "PY22", testCaseId, "FAIL", durationSec);
+            // 3️⃣ Prepare headers
+            Headers.Builder headerBuilder = new Headers.Builder();
+            for (Map.Entry<String, String> entry : row.entrySet()) {
+                String key = entry.getKey();
+                if (key.startsWith("Header_")) { // Example: Header_X-HSBC-User-Id
+                    String headerName = key.substring(7);
+                    String headerValue = entry.getValue().trim();
+                    // inject dynamic JWT token
+                    if (headerName.equalsIgnoreCase("X-HSBC-E2E-Trust-Token")) {
+                        headerValue = jwtToken;
+                    }
+                    headerBuilder.add(headerName, headerValue);
+                }
+            }
+
+            // 4️⃣ Prepare request body (optional)
+            RequestBody body = null;
+            String bodyStr = row.getOrDefault("Body", "").trim();
+            if (!bodyStr.isEmpty() && !method.equals("GET")) {
+                body = RequestBody.create(bodyStr, MediaType.parse("application/json"));
+            }
+
+            // 5️⃣ Build request
+            Request.Builder requestBuilder = new Request.Builder()
+                    .url(url)
+                    .headers(headerBuilder.build());
+
+            switch (method) {
+                case "POST":
+                    requestBuilder.post(body != null ? body : RequestBody.create(new byte[0]));
+                    break;
+                case "PUT":
+                    requestBuilder.put(body != null ? body : RequestBody.create(new byte[0]));
+                    break;
+                case "DELETE":
+                    requestBuilder.delete(body != null ? body : RequestBody.create(new byte[0]));
+                    break;
+                default:
+                    requestBuilder.get();
+            }
+
+            // 6️⃣ Execute
+            long start = System.currentTimeMillis();
+            try (Response response = client.newCall(requestBuilder.build()).execute()) {
+                long end = System.currentTimeMillis();
+
+                int statusCode = response.code();
+                String rawBody = response.body() != null ? response.body().string() : "";
+
+                // 7️⃣ Parse response JSON to flat map
+                Map<String, String> flatMap = JsonUtils.jsonToFlatMap(rawBody);
+
+                // 8️⃣ Return structured map
+                result.put("statusCode", statusCode);
+                result.put("rawBody", rawBody);
+                result.put("response", flatMap);
+                result.put("durationSec", (end - start) / 1000.0);
+            }
+
+        } catch (Exception e) {
+            result.put("error", e.getMessage());
+            e.printStackTrace();
         }
+        return result;
     }
 }
