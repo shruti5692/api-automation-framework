@@ -1,178 +1,196 @@
-use ExtentSparkReporter
+write ApiUtils in such a way that it actually becomes utility so that no matter what the api is we can use that utility. ApiUtils is under main folder . so my goal is user should not touch anything undermain folder. TestExecutor n PY22Tests is under test folder. I want to use methods like logBoth, logpass logfail, before suite, after suite, before method
 
-To integrate **ExtentSparkReporter** for detailed, interactive reporting, follow these code changes for your automation framework files. SparkReporter is part of the ExtentReports family, providing a modern and highly visual HTML experience.
+Here’s how to refactor `ApiUtils` so it is a pure utility class, easy to use for **any** API call (GET/POST/PUT/DELETE/ANY), generic and flexible, placed under the main folder, and not coupled to reporting or TestNG. All logging and reporting will be handled in the test layer (your test code), which uses utility methods like `logBoth`, `logPass`, `logFail` as needed.
 
 ***
 
-### 1. Global Setup (Example for Initialization)
-
-Add this to your framework setup code (preferably in a Base class or a static block):
+### ApiUtils.java (UTILITY, NO TEST LOGIC)
 
 ```java
-import com.aventstack.extentreports.ExtentReports;
-import com.aventstack.extentreports.ExtentTest;
-import com.aventstack.extentreports.reporter.ExtentSparkReporter;
+package com.framework.utils;
 
-public class ReportManager {
-    public static ExtentReports extent;
-    public static ExtentTest test;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-    static {
-        ExtentSparkReporter spark = new ExtentSparkReporter("test-output/ExtentSpark.html");
-        extent = new ExtentReports();
-        extent.attachReporter(spark);
+/**
+ * Pure utility class for making any type of API request.
+ * Users should NOT modify this utility or add anything test- or report-specific here.
+ */
+public class ApiUtils {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * Generic API call utility.
+     * @param urlOrConfigKey - If you want, you can provide a URL, or for your config system, a config key.
+     * @param headers - Headers for the request (can be empty map if not needed).
+     * @param body - Request body string (null or empty for GET/DELETE)
+     * @param method - Method type: GET, POST, PUT, DELETE, etc.
+     * @return fully parsed response (statusCode, headers, body raw, and body as Map if JSON)
+     * @throws Exception on IO failure
+     */
+    public static ApiResponse callApi(
+            String urlOrConfigKey,
+            Map<String, String> headers,
+            String body,
+            String method
+    ) throws Exception {
+        String apiUrl = urlOrConfigKey;
+        if(apiUrl.startsWith("http")) {
+            // use as-is
+        } else {
+            // try config
+            apiUrl = ConfigReader.get(urlOrConfigKey);
+        }
+        if (apiUrl == null || apiUrl.isBlank())
+            throw new RuntimeException("Missing API URL for: " + urlOrConfigKey);
+
+        URL url = new URL(apiUrl);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod(method);
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(15000);
+
+        // Add headers
+        if(headers != null) {
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                conn.setRequestProperty(entry.getKey(), entry.getValue());
+            }
+        }
+
+        // Write body for POST/PUT/PATCH
+        if ((method.equalsIgnoreCase("POST")
+                || method.equalsIgnoreCase("PUT")
+                || method.equalsIgnoreCase("PATCH"))
+            && body != null && !body.isEmpty()) {
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json");
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(body.getBytes(StandardCharsets.UTF_8));
+                os.flush();
+            }
+        }
+
+        // Read response code, headers & body
+        int statusCode = conn.getResponseCode();
+        Map<String, List<String>> headerFields = conn.getHeaderFields();
+
+        BufferedReader reader = new BufferedReader(new InputStreamReader(
+                statusCode < 400 ? conn.getInputStream() : conn.getErrorStream()
+        ));
+
+        StringBuilder resp = new StringBuilder();
+        String l;
+        while ((l = reader.readLine()) != null) resp.append(l);
+        reader.close();
+
+        // Try to parse response body (as JSON or plain)
+        String responseBodyRaw = resp.toString();
+        Map<String, Object> responseBodyMap = new HashMap<>();
+        try {
+            responseBodyMap = MAPPER.readValue(responseBodyRaw, Map.class);
+        } catch (Exception ignore) {}
+
+        return new ApiResponse(apiUrl, statusCode, headerFields, responseBodyRaw, responseBodyMap);
+    }
+
+    // Represents a generic API response
+    public static class ApiResponse {
+        public final String url;
+        public final int statusCode;
+        public final Map<String, List<String>> headers;
+        public final String bodyRaw;
+        public final Map<String, Object> bodyMap;
+
+        public ApiResponse(String url, int statusCode, Map<String, List<String>> headers,
+                           String bodyRaw, Map<String, Object> bodyMap) {
+            this.url = url;
+            this.statusCode = statusCode;
+            this.headers = headers;
+            this.bodyRaw = bodyRaw;
+            this.bodyMap = bodyMap;
+        }
     }
 }
 ```
+This utility is **pure**, and can be called for **any API** from your test code, no matter the API shape or parameters[1].
 
 ***
 
-### 2. TestExecutor Integration
+### Example Reporting in Test Layer (TestExecutor/PY22Tests)
 
-Replace all previous Extent* references with **ReportManager**'s statics. Use detailed logging at every major step:
+You write all reporting and test logic in the test level (using ExtentReports, logPass, logFail etc.), for example:
 
 ```java
-public static void runCase(Map<String, String> row) throws Exception {
-    String testId = row.getOrDefault("TestCaseID", "").trim();
-    ReportManager.test = ReportManager.extent.createTest("TestCase: " + testId);
+@BeforeSuite
+public void setupReport() {
+    ExtentSparkReporter spark = new ExtentSparkReporter("test-output/ExtentSpark.html");
+    extent = new ExtentReports();
+    extent.attachReporter(spark);
+}
 
-    String branchNum = row.getOrDefault("Branch number", "").trim();
-    String accNum = row.getOrDefault("AccountNumber", "").trim();
-    String expectedStatus = row.getOrDefault("ExpectedStatus", "").trim();
-    String expectedResponseCode = row.getOrDefault("Response code", "").trim();
+@BeforeMethod
+public void beforeMethod(Method method) {
+    test = extent.createTest(method.getName());
+    logBoth("Starting test method: " + method.getName());
+}
 
-    String prodId = "";
-    if (!branchNum.isEmpty() && !accNum.isEmpty()) prodId = branchNum + accNum;
-    else if (!branchNum.isEmpty()) prodId = branchNum;
-    else if (!accNum.isEmpty()) prodId = accNum;
+@Test
+public void exampleTest() {
+    Map<String, String> headers = new HashMap<>();
+    headers.put("Authorization", "Bearer tokenvalue");
 
-    ReportManager.test.info("TestCaseID: " + testId);
-    ReportManager.test.info("PROD_ID constructed: " + prodId);
+    ApiUtils.ApiResponse response = ApiUtils.callApi(
+        "https://jsonplaceholder.typicode.com/posts/1",
+        headers, null, "GET"
+    );
 
-    long start = System.currentTimeMillis();
+    logBoth("Status code: " + response.statusCode);
+    logBoth("Body: " + response.bodyRaw);
 
-    String jwt = JwtFetcher.generateToken();
-    Map<String, String> headers = HeaderUtils.buildHeaders(jwt, prodId);
-    ReportManager.test.info("JWT generated. Headers: " + headers);
-
-    Map<String, Object> responseMap = ApiUtils.callApi("py22.api.url", headers, null, "GET");
-    ReportManager.test.info("API call made, got response map: " + responseMap);
-
-    int statusCode = (int) responseMap.getOrDefault("statusCode", 0);
-    Map<String, String> flatResponse = (Map<String, String>) responseMap.get("responseBody");
-
-    String actualResponseCode = flatResponse.getOrDefault("responseCode", "");
-    String actualErrorCode = flatResponse.getOrDefault("errorCode", "");
-
-    ReportManager.test.info("HTTP Status: " + statusCode);
-    ReportManager.test.info("ActualResponseCode: " + actualResponseCode);
-    ReportManager.test.info("ActualErrorCode: " + actualErrorCode);
-
-    String result;
-    if (statusCode == 200) {
-        result = expectedResponseCode.equals(actualResponseCode) ? "PASS" : "FAIL";
-        ReportManager.test.info("VALIDATION: comparing expectedResponseCode [" + expectedResponseCode +
-                "] with actualResponseCode [" + actualResponseCode + "]");
+    if (response.statusCode == 200) {
+        logPass("Received 200 OK");
     } else {
-        result = expectedResponseCode.equals(actualErrorCode) ? "PASS" : "FAIL";
-        ReportManager.test.info("VALIDATION: comparing expectedResponseCode [" + expectedResponseCode +
-                "] with actualErrorCode [" + actualErrorCode + "]");
+        logFail("API returned not 200");
     }
+}
 
-    long durationSec = (System.currentTimeMillis() - start) / 1000;
-    ReportManager.test.info("Test Duration: " + durationSec + " seconds");
-    ReportManager.test.info("Result: " + result);
-
-    if ("PASS".equals(result)) {
-        ReportManager.test.pass("Test Passed");
+@AfterMethod
+public void afterMethod(ITestResult result) {
+    if (result.isSuccess()) {
+        logPass("Test Passed");
     } else {
-        ReportManager.test.fail("Test Failed");
+        logFail("Test Failed: " + result.getThrowable());
     }
+    extent.flush();
+}
 
-    ExcelUtils.writeResultWithDuration("src/test/resources/testdata.xlsx", "PY22", testId, result, durationSec);
+@AfterSuite
+public void tearDownReport() {
+    extent.flush();
+}
 
-    ReportManager.extent.flush();
+// Logging helpers for test layer
+public void logBoth(String msg) {
+    test.info(msg);
+}
+public void logPass(String msg) {
+    test.pass(msg);
+}
+public void logFail(String msg) {
+    test.fail(msg);
 }
 ```
+With this architecture:
+- `ApiUtils` is reusable, API-agnostic, and safe for all teams.
+- All test data, validation, and reporting are managed at the test layer, where you use log methods, suites, and other hooks.
+- You never touch main/util code for reporting or test flow—**all is in the test layer** as you want.
 
-***
+This separation makes your utilities robust, reusable, and standard across all your testing projects[1].
 
-### 3. ApiUtils Logging Integration
-
-Ensure `ApiUtils` logs via the current test:
-
-```java
-public static Map<String, Object> callApi(String configKey, Map<String, String> headers, String body, String method) throws Exception {
-    String apiUrl = ConfigReader.get(configKey);
-    if (apiUrl == null || apiUrl.isBlank())
-        throw new RuntimeException("Missing API URL for key: " + configKey);
-
-    if (ReportManager.test != null) ReportManager.test.info("API URL: " + apiUrl);
-    if (ReportManager.test != null) ReportManager.test.info("HTTP Method: " + method);
-    if (ReportManager.test != null) ReportManager.test.info("Headers: " + headers);
-    if (ReportManager.test != null && body != null) ReportManager.test.info("Request Body: " + body);
-
-    URL url = new URL(apiUrl);
-    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-    conn.setRequestMethod(method);
-    conn.setConnectTimeout(10000);
-    conn.setReadTimeout(15000);
-
-    for (Map.Entry<String, String> entry : headers.entrySet()) {
-        conn.setRequestProperty(entry.getKey(), entry.getValue());
-    }
-
-    int statusCode = conn.getResponseCode();
-    if (ReportManager.test != null) ReportManager.test.info("HTTP Status Code: " + statusCode);
-
-    BufferedReader reader = new BufferedReader(new InputStreamReader(
-            statusCode < 400 ? conn.getInputStream() : conn.getErrorStream()
-    ));
-
-    StringBuilder response = new StringBuilder();
-    String line;
-    while ((line = reader.readLine()) != null) response.append(line);
-    reader.close();
-
-    if (ReportManager.test != null) ReportManager.test.info("Raw Response: " + response);
-
-    Map<String, Object> result = new HashMap<>();
-    result.put("statusCode", statusCode);
-    Map<String, String> flat = JsonUtils.jsonToFlatMap(response.toString());
-    result.put("responseBody", flat);
-
-    if (ReportManager.test != null) ReportManager.test.info("Flattened Response: " + flat);
-
-    return result;
-}
-```
-
-***
-
-### 4. pY22Tests Integration
-
-Update your test classes:
-
-```java
-@Test(description = "TC01 - Valid PROD_ID")
-public void TC01_Valid_PROD_ID() throws Exception {
-    ReportManager.test = ReportManager.extent.createTest("PY22 TC01 Valid PROD_ID");
-    ReportManager.test.info("Starting test: TC01_Valid_PROD_ID");
-    Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC01_SC01_PY22_Valid_PROD_ID");
-    TestExecutor.runCase(data);
-    ReportManager.test.info("Finished test: TC01_Valid_PROD_ID");
-}
-```
-
-***
-
-### Summary Table
-
-| Step           | Change                                                                    |
-|----------------|---------------------------------------------------------------------------|
-| Reporter Setup | Use `ExtentSparkReporter` in a shared `ReportManager`                     |
-| Logging        | Log every test and API workflow step using `ReportManager.test`           |
-| Flushing       | Call `ReportManager.extent.flush()` after each test to update the report  |
-
-With these changes, your Spark report will include all relevant details — test input, headers, API calls, payload, validation steps, comparison, and result explanations — in a clean, graphical HTML dashboard. This greatly aids debugging and test root cause analysis.
-
+Citations:
+[1] ApiUtils.txt https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/88928485/504c90e4-ac15-44f9-9602-eeb2c42dff84/ApiUtils.txt
