@@ -1,63 +1,225 @@
 package com.framework.core;
 
 import com.framework.utils.*;
+import com.framework.utils.ApiUtils.ApiResponse;
+import com.aventstack.extentreports.*;
+import com.aventstack.extentreports.reporter.ExtentSparkReporter;
+
+import org.testng.Assert;
+import org.testng.annotations.*;
+
+import java.lang.reflect.Method;
 import java.util.*;
 
 public class TestExecutor {
 
-    public static void runCase(Map<String, String> row) throws Exception {
+    public static ExtentReports extent;
+    public static ExtentTest test;
+    
+    private static final String EXCEL_PATH = "src/test/resources/testdata.xlsx";
+    private static final String SHEET = "PY22";
 
+    // Example set to mark tests needing DB validation — Adjust per your needs
+    private static final Set<String> DB_REQUIRED_TESTS = Set.of("TC01_SC01_PY22_Valid_PROD_ID");
+
+    @BeforeSuite
+    public void beforeSuite() {
+        ExtentSparkReporter spark = new ExtentSparkReporter("test-output/ExtentSpark.html");
+        extent = new ExtentReports();
+        extent.attachReporter(spark);
+        logBoth("=== Test Suite Started ===");
+    }
+
+    @AfterSuite
+    public void afterSuite() {
+        logBoth("=== Test Suite Finished ===");
+        extent.flush();
+    }
+
+    @BeforeMethod
+    public void beforeMethod(Method method) {
+        test = extent.createTest(method.getName());
+        logBoth("Starting test method: " + method.getName());
+    }
+
+    public void logBoth(String message) {
+        System.out.println(message);
+        if (test != null) test.info(message);
+    }
+
+    public void logPass(String message) {
+        System.out.println("PASS: " + message);
+        if (test != null) test.pass(message);
+    }
+
+    public void logFail(String message) {
+        System.err.println("FAIL: " + message);
+        if (test != null) test.fail(message);
+    }
+
+    public static void runCase(Map<String, String> row) throws Exception {
         String testId = row.getOrDefault("TestCaseID", "").trim();
+
+        test = extent.createTest("TestCase: " + testId);
+        test.info("=== Starting TestCase: " + testId + " ===");
+
+        // Input fields
         String branchNum = row.getOrDefault("Branch number", "").trim();
         String accNum = row.getOrDefault("AccountNumber", "").trim();
         String expectedStatus = row.getOrDefault("ExpectedStatus", "").trim();
         String expectedResponseCode = row.getOrDefault("Response code", "").trim();
+        String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim();
 
-        // --- Construct PROD_ID dynamically ---
-        String prodId;
-        if (branchNum.isEmpty() && accNum.isEmpty()) prodId = " ";
-        else if (branchNum.isEmpty()) prodId = " " + accNum;
-        else if (accNum.isEmpty()) prodId = branchNum + " ";
-        else prodId = branchNum + accNum;
+        // Construct PROD_ID
+        String prodId = "";
+        if (!branchNum.isEmpty() && !accNum.isEmpty()) prodId = branchNum + accNum;
+        else if (!branchNum.isEmpty()) prodId = branchNum;
+        else if (!accNum.isEmpty()) prodId = accNum;
 
-        System.out.println("\n🚀 Running TestCase: " + testId);
-        System.out.println("➡️ PROD_ID: [" + prodId + "]");
+        test.info("PROD_ID constructed: " + prodId);
 
         long start = System.currentTimeMillis();
 
-        // --- Prepare JWT and headers ---
+        // Prepare JWT and headers
         String jwt = JwtFetcher.generateToken();
         Map<String, String> headers = HeaderUtils.buildHeaders(jwt, prodId);
+        test.info("JWT and headers prepared: " + headers);
 
-        // --- API call ---
-        Map<String, Object> responseMap = ApiUtils.callApi("py22.api.url", headers, null, "GET");
+        // API call
+        ApiResponse response = ApiUtils.callApi("py22.api.url", headers, null, "GET");
+        test.info("API response status: " + response.statusCode);
+        test.info("API raw response body: " + (response.bodyRaw.length() > 800 ? response.bodyRaw.substring(0, 800) + "..." : response.bodyRaw));
 
-        // --- Extract response info ---
-        int statusCode = (int) responseMap.getOrDefault("statusCode", 0);
-        Map<String, String> flatResponse = (Map<String, String>) responseMap.get("responseBody");
+        // Extract needed fields from response body map
+        String actualResponseCode = "";
+        String actualErrorCode = "";
+        if (response.bodyMap != null) {
+            actualResponseCode = Optional.ofNullable(response.bodyMap.get("responseCode")).map(Object::toString).orElse("");
+            actualErrorCode = Optional.ofNullable(response.bodyMap.get("errorCode")).map(Object::toString).orElse("");
+        }
 
-        String actualResponseCode = flatResponse.getOrDefault("responseCode", "");
-        String actualErrorCode = flatResponse.getOrDefault("errorCode", "");
+        test.info("Extracted actualResponseCode: " + actualResponseCode);
+        test.info("Extracted actualErrorCode: " + actualErrorCode);
 
-        // --- Validation ---
+        // Validate HTTP status and response/error codes
         String result;
-        if (statusCode == 200) {
+        if (response.statusCode == 200) {
             result = expectedResponseCode.equals(actualResponseCode) ? "PASS" : "FAIL";
+            test.info("Validation comparing expectedResponseCode [" + expectedResponseCode + "] with actualResponseCode [" + actualResponseCode + "]");
         } else {
             result = expectedResponseCode.equals(actualErrorCode) ? "PASS" : "FAIL";
+            test.info("Validation comparing expectedResponseCode [" + expectedResponseCode + "] with actualErrorCode [" + actualErrorCode + "]");
+        }
+
+        // Field-wise validation
+        boolean pass = true;
+        StringBuilder failReasons = new StringBuilder();
+
+        // Normalize keys helper
+        java.util.function.Function<String, String> normalize = s -> {
+            if (s == null) return "";
+            return s.replaceAll("\\[\\d+\\]", "") // Remove indices like [0]
+                    .replaceAll("[^A-Za-z0-9]", "") // Remove non-alphanumeric
+                    .toLowerCase().trim();
+        };
+
+        // Flatten API response for field search
+        Map<String, String> flatApiMap = new LinkedHashMap<>();
+        if (response.bodyMap != null) {
+            flattenMap("", response.bodyMap, flatApiMap);
+        }
+
+        test.info("Flattened API response keys: " + flatApiMap.keySet());
+
+        boolean isDbRequired = DB_REQUIRED_TESTS.contains(testId);
+        List<Map<String, String>> dbData = new ArrayList<>();
+        if (isDbRequired) {
+            test.info("DB-driven validation enabled for test: " + testId);
+            // TODO fetch DB data here if required; for now empty list
+        } else {
+            test.info("DB-driven validation not required.");
+        }
+
+        if (isDbRequired && !dbData.isEmpty()) {
+            Map<String, String> dbRow = dbData.get(0);
+            for (Map.Entry<String, String> dbEntry : dbRow.entrySet()) {
+                String keyDb = dbEntry.getKey();
+                String expectedVal = dbEntry.getValue();
+
+                Optional<Map.Entry<String, String>> match = flatApiMap.entrySet().stream()
+                        .filter(e -> normalize.apply(e.getKey()).endsWith(normalize.apply(keyDb)))
+                        .findFirst();
+
+                String actualVal = match.map(Map.Entry::getValue).orElse(null);
+                test.info(String.format("DB Validation -> Field: %-20s | Expected: %-15s | Actual: %-15s", keyDb, expectedVal, actualVal));
+                if (!equalsIgnoreCaseTrim(expectedVal, actualVal)) {
+                    pass = false;
+                    failReasons.append(String.format("
+Field '%s' mismatch: expected='%s', actual='%s'", keyDb, expectedVal, actualVal));
+                }
+            }
+        } else if (!expectedFieldsJson.isEmpty()) {
+            test.info("Excel-driven field validation");
+
+            Map<String, String> expectedFields = new HashMap<>();
+            try {
+                expectedFields = JsonUtils.jsonToFlatMap(expectedFieldsJson);
+            } catch (Exception e) {
+                test.warning("Failed to parse ExpectedFields JSON: " + e.getMessage());
+            }
+
+            for (Map.Entry<String, String> ef : expectedFields.entrySet()) {
+                String key = ef.getKey();
+                String expectedVal = ef.getValue();
+
+                Optional<Map.Entry<String, String>> match = flatApiMap.entrySet().stream()
+                        .filter(e -> normalize.apply(e.getKey()).endsWith(normalize.apply(key)))
+                        .findFirst();
+
+                String actualVal = match.map(Map.Entry::getValue).orElse(null);
+                test.info(String.format("Excel Validation -> Field: %-20s | Expected: %-15s | Actual: %-15s", key, expectedVal, actualVal));
+                if (!equalsIgnoreCaseTrim(expectedVal, actualVal)) {
+                    pass = false;
+                    failReasons.append(String.format("
+Field '%s' mismatch: expected='%s', actual='%s'", key, expectedVal, actualVal));
+                }
+            }
+        } else {
+            test.info("No field-wise validation data provided (DB or ExpectedFields).");
         }
 
         long durationSec = (System.currentTimeMillis() - start) / 1000;
-        System.out.printf("✅ Result: %s | HTTP: %s | RespCode: %s | ErrCode: %s | Duration: %ds%n",
-                result, statusCode, actualResponseCode, actualErrorCode, durationSec);
 
-        // --- Write to Excel ---
-        ExcelUtils.writeResultWithDuration(
-                "src/test/resources/testdata.xlsx",
-                "PY22",
-                testId,
-                result,
-                durationSec
-        );
+        if (!"PASS".equals(result) || !pass) {
+            String failMsg = result.equals("PASS") ? failReasons.toString() : "HTTP/Response code validation failed";
+            test.fail("Test failed: " + failMsg);
+            ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET, testId, "FAIL: " + failMsg, durationSec);
+            Assert.fail(failMsg);
+        } else {
+            test.pass("Test passed");
+            ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET, testId, "PASS", durationSec);
+        }
+        test.info("Test duration: " + durationSec + " sec");
+        test.info("=== Ending TestCase: " + testId + " ===");
+        extent.flush();
+    }
+
+    // Flatten recursive helper for nested map to flat key-value pairs (dot notation)
+    private static void flattenMap(String prefix, Map<String, Object> map, Map<String, String> flatMap) {
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            String key = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
+            Object val = entry.getValue();
+            if (val instanceof Map) {
+                flattenMap(key, (Map<String, Object>) val, flatMap);
+            } else {
+                flatMap.put(key, val != null ? val.toString() : null);
+            }
+        }
+    }
+
+    private static boolean equalsIgnoreCaseTrim(String a, String b) {
+        if (a == null && b == null) return true;
+        if (a == null || b == null) return false;
+        return a.trim().equalsIgnoreCase(b.trim());
     }
 }
