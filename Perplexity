@@ -1,196 +1,184 @@
-write ApiUtils in such a way that it actually becomes utility so that no matter what the api is we can use that utility. ApiUtils is under main folder . so my goal is user should not touch anything undermain folder. TestExecutor n PY22Tests is under test folder. I want to use methods like logBoth, logpass logfail, before suite, after suite, before method
+give me updated code for TestExecutor n PY22Tests with all these logging methods
 
-Here’s how to refactor `ApiUtils` so it is a pure utility class, easy to use for **any** API call (GET/POST/PUT/DELETE/ANY), generic and flexible, placed under the main folder, and not coupled to reporting or TestNG. All logging and reporting will be handled in the test layer (your test code), which uses utility methods like `logBoth`, `logPass`, `logFail` as needed.
+Below are the updated versions of your `TestExecutor` and `PY22Tests` classes integrating the requested logging methods such as `logBoth`, `logPass`, `logFail`, and lifecycle methods `beforeSuite`, `afterSuite`, and `beforeMethod`. The reporting and logging are centralized, and logging methods can be customized to use ExtentSparkReporter as defined in a shared report manager or base test class.
 
 ***
 
-### ApiUtils.java (UTILITY, NO TEST LOGIC)
+### TestExecutor.java
 
 ```java
-package com.framework.utils;
+package com.framework.core;
 
-import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.util.*;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.framework.utils.*;
+import com.framework.utils.ApiUtils.ApiResponse;
+import org.testng.annotations.*;
 
-/**
- * Pure utility class for making any type of API request.
- * Users should NOT modify this utility or add anything test- or report-specific here.
- */
-public class ApiUtils {
+import java.util.Map;
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+public class TestExecutor {
 
-    /**
-     * Generic API call utility.
-     * @param urlOrConfigKey - If you want, you can provide a URL, or for your config system, a config key.
-     * @param headers - Headers for the request (can be empty map if not needed).
-     * @param body - Request body string (null or empty for GET/DELETE)
-     * @param method - Method type: GET, POST, PUT, DELETE, etc.
-     * @return fully parsed response (statusCode, headers, body raw, and body as Map if JSON)
-     * @throws Exception on IO failure
-     */
-    public static ApiResponse callApi(
-            String urlOrConfigKey,
-            Map<String, String> headers,
-            String body,
-            String method
-    ) throws Exception {
-        String apiUrl = urlOrConfigKey;
-        if(apiUrl.startsWith("http")) {
-            // use as-is
+    public static ExtentReports extent;
+    public static ExtentTest test;
+
+    @BeforeSuite
+    public void beforeSuite() {
+        ExtentSparkReporter spark = new ExtentSparkReporter("test-output/ExtentSpark.html");
+        extent = new ExtentReports();
+        extent.attachReporter(spark);
+        logBoth("=== Test Suite Started ===");
+    }
+
+    @AfterSuite
+    public void afterSuite() {
+        logBoth("=== Test Suite Finished ===");
+        extent.flush();
+    }
+
+    @BeforeMethod
+    public void beforeMethod(Method method) {
+        test = extent.createTest(method.getName());
+        logBoth("Starting test method: " + method.getName());
+    }
+
+    public void logBoth(String message) {
+        System.out.println(message);
+        if (test != null) test.info(message);
+    }
+
+    public void logPass(String message) {
+        System.out.println("PASS: " + message);
+        if (test != null) test.pass(message);
+    }
+
+    public void logFail(String message) {
+        System.err.println("FAIL: " + message);
+        if (test != null) test.fail(message);
+    }
+
+    public static void runCase(Map<String, String> row) throws Exception {
+        String testId = row.getOrDefault("TestCaseID", "").trim();
+        test = extent.createTest("TestCase: " + testId);
+
+        String branchNum = row.getOrDefault("Branch number", "").trim();
+        String accNum = row.getOrDefault("AccountNumber", "").trim();
+        String expectedStatus = row.getOrDefault("ExpectedStatus", "").trim();
+        String expectedResponseCode = row.getOrDefault("Response code", "").trim();
+
+        String prodId = "";
+        if (!branchNum.isEmpty() && !accNum.isEmpty()) prodId = branchNum + accNum;
+        else if (!branchNum.isEmpty()) prodId = branchNum;
+        else if (!accNum.isEmpty()) prodId = accNum;
+
+        test.info("TestCaseID: " + testId);
+        test.info("PROD_ID constructed: " + prodId);
+
+        long start = System.currentTimeMillis();
+
+        String jwt = JwtFetcher.generateToken();
+        Map<String, String> headers = HeaderUtils.buildHeaders(jwt, prodId);
+        test.info("JWT generated. Headers: " + headers);
+
+        ApiResponse response = ApiUtils.callApi("py22.api.url", headers, null, "GET");
+        test.info("API call made, got response: " + response.bodyRaw);
+
+        int statusCode = response.statusCode;
+        Map<String, Object> flatResponse = response.bodyMap;
+
+        String actualResponseCode = flatResponse.getOrDefault("responseCode", "").toString();
+        String actualErrorCode = flatResponse.getOrDefault("errorCode", "").toString();
+
+        test.info("HTTP Status: " + statusCode);
+        test.info("Actual ResponseCode: " + actualResponseCode);
+        test.info("Actual ErrorCode: " + actualErrorCode);
+
+        String result;
+        if (statusCode == 200) {
+            result = expectedResponseCode.equals(actualResponseCode) ? "PASS" : "FAIL";
+            test.info("Validation: comparing expectedResponseCode [" + expectedResponseCode + "] with actualResponseCode [" + actualResponseCode + "]");
         } else {
-            // try config
-            apiUrl = ConfigReader.get(urlOrConfigKey);
-        }
-        if (apiUrl == null || apiUrl.isBlank())
-            throw new RuntimeException("Missing API URL for: " + urlOrConfigKey);
-
-        URL url = new URL(apiUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod(method);
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(15000);
-
-        // Add headers
-        if(headers != null) {
-            for (Map.Entry<String, String> entry : headers.entrySet()) {
-                conn.setRequestProperty(entry.getKey(), entry.getValue());
-            }
+            result = expectedResponseCode.equals(actualErrorCode) ? "PASS" : "FAIL";
+            test.info("Validation: comparing expectedResponseCode [" + expectedResponseCode + "] with actualErrorCode [" + actualErrorCode + "]");
         }
 
-        // Write body for POST/PUT/PATCH
-        if ((method.equalsIgnoreCase("POST")
-                || method.equalsIgnoreCase("PUT")
-                || method.equalsIgnoreCase("PATCH"))
-            && body != null && !body.isEmpty()) {
-            conn.setDoOutput(true);
-            conn.setRequestProperty("Content-Type", "application/json");
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(body.getBytes(StandardCharsets.UTF_8));
-                os.flush();
-            }
+        long durationSec = (System.currentTimeMillis() - start) / 1000;
+        test.info("Test Duration: " + durationSec + " seconds");
+        test.info("Result: " + result);
+
+        if ("PASS".equals(result)) {
+            test.pass("Test Passed");
+        } else {
+            test.fail("Test Failed");
         }
 
-        // Read response code, headers & body
-        int statusCode = conn.getResponseCode();
-        Map<String, List<String>> headerFields = conn.getHeaderFields();
+        ExcelUtils.writeResultWithDuration("src/test/resources/testdata.xlsx", "PY22", testId, result, durationSec);
 
-        BufferedReader reader = new BufferedReader(new InputStreamReader(
-                statusCode < 400 ? conn.getInputStream() : conn.getErrorStream()
-        ));
-
-        StringBuilder resp = new StringBuilder();
-        String l;
-        while ((l = reader.readLine()) != null) resp.append(l);
-        reader.close();
-
-        // Try to parse response body (as JSON or plain)
-        String responseBodyRaw = resp.toString();
-        Map<String, Object> responseBodyMap = new HashMap<>();
-        try {
-            responseBodyMap = MAPPER.readValue(responseBodyRaw, Map.class);
-        } catch (Exception ignore) {}
-
-        return new ApiResponse(apiUrl, statusCode, headerFields, responseBodyRaw, responseBodyMap);
-    }
-
-    // Represents a generic API response
-    public static class ApiResponse {
-        public final String url;
-        public final int statusCode;
-        public final Map<String, List<String>> headers;
-        public final String bodyRaw;
-        public final Map<String, Object> bodyMap;
-
-        public ApiResponse(String url, int statusCode, Map<String, List<String>> headers,
-                           String bodyRaw, Map<String, Object> bodyMap) {
-            this.url = url;
-            this.statusCode = statusCode;
-            this.headers = headers;
-            this.bodyRaw = bodyRaw;
-            this.bodyMap = bodyMap;
-        }
+        extent.flush();
     }
 }
 ```
-This utility is **pure**, and can be called for **any API** from your test code, no matter the API shape or parameters[1].
 
 ***
 
-### Example Reporting in Test Layer (TestExecutor/PY22Tests)
-
-You write all reporting and test logic in the test level (using ExtentReports, logPass, logFail etc.), for example:
+### PY22Tests.java
 
 ```java
-@BeforeSuite
-public void setupReport() {
-    ExtentSparkReporter spark = new ExtentSparkReporter("test-output/ExtentSpark.html");
-    extent = new ExtentReports();
-    extent.attachReporter(spark);
-}
+package com.framework.tests;
 
-@BeforeMethod
-public void beforeMethod(Method method) {
-    test = extent.createTest(method.getName());
-    logBoth("Starting test method: " + method.getName());
-}
+import com.framework.core.TestExecutor;
+import com.framework.utils.ExcelUtils;
+import org.testng.annotations.*;
 
-@Test
-public void exampleTest() {
-    Map<String, String> headers = new HashMap<>();
-    headers.put("Authorization", "Bearer tokenvalue");
+import java.util.Map;
 
-    ApiUtils.ApiResponse response = ApiUtils.callApi(
-        "https://jsonplaceholder.typicode.com/posts/1",
-        headers, null, "GET"
-    );
+public class PY22Tests {
 
-    logBoth("Status code: " + response.statusCode);
-    logBoth("Body: " + response.bodyRaw);
+    private static final String EXCEL_PATH = "src/test/resources/testdata.xlsx";
+    private static final String SHEET = "PY22";
 
-    if (response.statusCode == 200) {
-        logPass("Received 200 OK");
-    } else {
-        logFail("API returned not 200");
+    @BeforeSuite
+    public void beforeSuite() {
+        TestExecutor.beforeSuite();
     }
-}
 
-@AfterMethod
-public void afterMethod(ITestResult result) {
-    if (result.isSuccess()) {
-        logPass("Test Passed");
-    } else {
-        logFail("Test Failed: " + result.getThrowable());
+    @AfterSuite
+    public void afterSuite() {
+        TestExecutor.afterSuite();
     }
-    extent.flush();
-}
 
-@AfterSuite
-public void tearDownReport() {
-    extent.flush();
-}
+    @BeforeMethod
+    public void beforeMethod(java.lang.reflect.Method method) {
+        TestExecutor.beforeMethod(method);
+    }
 
-// Logging helpers for test layer
-public void logBoth(String msg) {
-    test.info(msg);
-}
-public void logPass(String msg) {
-    test.pass(msg);
-}
-public void logFail(String msg) {
-    test.fail(msg);
+    @Test(description = "TC01 - Valid PROD_ID")
+    public void TC01_Valid_PROD_ID() throws Exception {
+        TestExecutor.test.info("Starting test: TC01_Valid_PROD_ID");
+        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC01_SC01_PY22_Valid_PROD_ID");
+        TestExecutor.runCase(data);
+        TestExecutor.test.info("Ending test: TC01_Valid_PROD_ID");
+    }
+
+    @Test(description = "TC02 - Mandatory Field Validation (Branch number)")
+    public void TC02_MandatoryField_Validation_BranchNumber() throws Exception {
+        TestExecutor.test.info("Starting test: TC02_MandatoryField_Validation_BranchNumber");
+        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC02_SC01_PY22_MandatoryField_Validation_BranchNumber");
+        TestExecutor.runCase(data);
+        TestExecutor.test.info("Ending test: TC02_MandatoryField_Validation_BranchNumber");
+    }
+
+    @Test(description = "TC03 - Mandatory Field Validation (Account number)")
+    public void TC03_MandatoryField_Validation_AccountNumber() throws Exception {
+        TestExecutor.test.info("Starting test: TC03_MandatoryField_Validation_AccountNumber");
+        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC03_SC01_PY22_MandatoryField_Validation_AccountNumber");
+        TestExecutor.runCase(data);
+        TestExecutor.test.info("Ending test: TC03_MandatoryField_Validation_AccountNumber");
+    }
 }
 ```
-With this architecture:
-- `ApiUtils` is reusable, API-agnostic, and safe for all teams.
-- All test data, validation, and reporting are managed at the test layer, where you use log methods, suites, and other hooks.
-- You never touch main/util code for reporting or test flow—**all is in the test layer** as you want.
 
-This separation makes your utilities robust, reusable, and standard across all your testing projects[1].
+***
 
-Citations:
-[1] ApiUtils.txt https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/88928485/504c90e4-ac15-44f9-9602-eeb2c42dff84/ApiUtils.txt
+These implementations centralize and unify your logging using ExtentReports and provide your requested lifecycle methods. All test flow and logging are handled in the test classes or TestExecutor, so your `ApiUtils` remains untouched and purely utility-focused.
+
+You can extend this pattern with additional tests and logging helpers as needed.
+
