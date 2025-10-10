@@ -1,0 +1,38 @@
+package com.framework.utils;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class HeaderUtils {
+
+    public static Map<String, String> getPy22Headers(String prodId) {
+        Map<String, String> headers = new HashMap<>();
+
+        headers.put("X-HSBC-Locale", "en_GB");
+        headers.put("X-HSBC-Chnl-CountryCode", "GB");
+        headers.put("X-HSBC-Chnl-Group-Member", "HBEU");
+        headers.put("X-HSBC-User-Id", "C12345678");
+        headers.put("X-HSBC-CAM-Level", "40");
+        headers.put("X-HSBC-Channel-Id", "OHB");
+        headers.put("X-HSBC-Src-Device-Id", "1234");
+        headers.put("X-HSBC-Session-Correlation-Id", "q2");
+        headers.put("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)");
+        headers.put("X-HSBC-Request-Correlation-Id", "shubham");
+        headers.put("X-HSBC-Consumer-Id", "GBHBEU_CMB.MOBILE_I");
+        headers.put("X-HSBC-IP-Id", "136.46.24.54");
+        headers.put("X-HSBC-Bene-Type", "RSP9");
+        headers.put("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2");
+        headers.put("X-HSBC-Client-Secret", "68Cf51e5D5514180bf211DAf3396AD1C");
+        headers.put("X-HSBC-Sort-Code", "000001");
+        headers.put("X-HSBC-Operator-Service-Unit-Id", "400521");
+        headers.put("X-HSBC-Operator-Institution-Id", "Z");
+        headers.put("x-forwarded-for", "1234");
+        headers.put("accept-language", "en");
+
+        // Sensitive field — inject dynamic PROD_ID
+        headers.put("X-HSBC-Sensitive-Data",
+                "[{\"key\":\"84d89877f0d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7884\",\"value\":\"" + prodId + "\"}]");
+
+        return headers;
+    }
+}
