@@ -1,50 +1,52 @@
 package com.framework.utils;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.*;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.restassured.RestAssured;
+import io.restassured.response.Response;
+import org.json.JSONObject;
+
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
 
 public class ApiUtils {
 
-    private static final ObjectMapper mapper = new ObjectMapper();
+    public static Map<String, String> callApi(String url, Map<String, String> headers, String username, String password) {
+        System.out.println("🔹 Calling API: " + url);
 
-    public static Map<String, Object> callApi(String configKey, Map<String, String> headers, String body, String method) throws Exception {
-        String apiUrl = ConfigReader.get(configKey);
-        if (apiUrl == null || apiUrl.isBlank())
-            throw new RuntimeException("Missing API URL for key: " + configKey);
+        Response res = RestAssured
+                .given()
+                .auth().preemptive().basic(username, password)
+                .headers(headers)
+                .when()
+                .get(url)
+                .then()
+                .extract()
+                .response();
 
-        URL url = new URL(apiUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod(method);
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(15000);
+        int status = res.statusCode();
+        System.out.println("✅ API Response Code: " + status);
 
-        // --- Add headers ---
-        for (Map.Entry<String, String> entry : headers.entrySet()) {
-            conn.setRequestProperty(entry.getKey(), entry.getValue());
+        // Convert and flatten JSON response
+        JSONObject json = new JSONObject(res.getBody().asString());
+        Map<String, String> flatMap = new HashMap<>();
+        flattenJson("", json, flatMap);
+
+        flatMap.put("statusCode", String.valueOf(status));
+        return flatMap;
+    }
+
+    private static void flattenJson(String prefix, JSONObject json, Map<String, String> flatMap) {
+        Iterator<String> keys = json.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = json.get(key);
+            String fullKey = prefix.isEmpty() ? key : prefix + "." + key;
+
+            if (value instanceof JSONObject) {
+                flattenJson(fullKey, (JSONObject) value, flatMap);
+            } else {
+                flatMap.put(fullKey, String.valueOf(value));
+            }
         }
-
-        // --- Read response ---
-        int statusCode = conn.getResponseCode();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(
-                statusCode < 400 ? conn.getInputStream() : conn.getErrorStream()
-        ));
-
-        StringBuilder response = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) response.append(line);
-        reader.close();
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("statusCode", statusCode);
-
-        // Convert JSON to flat map
-        Map<String, String> flat = JsonUtils.jsonToFlatMap(response.toString());
-        result.put("responseBody", flat);
-
-        return result;
     }
 }
