@@ -1,11 +1,105 @@
-I am working on automation framework for testing purpose. I have Utils mentioned in these files. Fix the logical errors in these files
+use ExtentSparkReporter
 
-Here are the logical errors found in the provided files, along with suggested fixes for each utility to ensure better reliability and correct behavior in your test automation framework[1][2][3].
+To integrate **ExtentSparkReporter** for detailed, interactive reporting, follow these code changes for your automation framework files. SparkReporter is part of the ExtentReports family, providing a modern and highly visual HTML experience.
 
-### ApiUtils.txt
+***
 
-- **Issue:** The API call does not support sending a request body for POST/PUT methods. The code always makes a GET request ignoring the body, which is not appropriate for POST/PUT APIs.
-- **Fix:** Add support for writing a body when the method is POST or PUT, and set the correct `Content-Type` header.
+### 1. Global Setup (Example for Initialization)
+
+Add this to your framework setup code (preferably in a Base class or a static block):
+
+```java
+import com.aventstack.extentreports.ExtentReports;
+import com.aventstack.extentreports.ExtentTest;
+import com.aventstack.extentreports.reporter.ExtentSparkReporter;
+
+public class ReportManager {
+    public static ExtentReports extent;
+    public static ExtentTest test;
+
+    static {
+        ExtentSparkReporter spark = new ExtentSparkReporter("test-output/ExtentSpark.html");
+        extent = new ExtentReports();
+        extent.attachReporter(spark);
+    }
+}
+```
+
+***
+
+### 2. TestExecutor Integration
+
+Replace all previous Extent* references with **ReportManager**'s statics. Use detailed logging at every major step:
+
+```java
+public static void runCase(Map<String, String> row) throws Exception {
+    String testId = row.getOrDefault("TestCaseID", "").trim();
+    ReportManager.test = ReportManager.extent.createTest("TestCase: " + testId);
+
+    String branchNum = row.getOrDefault("Branch number", "").trim();
+    String accNum = row.getOrDefault("AccountNumber", "").trim();
+    String expectedStatus = row.getOrDefault("ExpectedStatus", "").trim();
+    String expectedResponseCode = row.getOrDefault("Response code", "").trim();
+
+    String prodId = "";
+    if (!branchNum.isEmpty() && !accNum.isEmpty()) prodId = branchNum + accNum;
+    else if (!branchNum.isEmpty()) prodId = branchNum;
+    else if (!accNum.isEmpty()) prodId = accNum;
+
+    ReportManager.test.info("TestCaseID: " + testId);
+    ReportManager.test.info("PROD_ID constructed: " + prodId);
+
+    long start = System.currentTimeMillis();
+
+    String jwt = JwtFetcher.generateToken();
+    Map<String, String> headers = HeaderUtils.buildHeaders(jwt, prodId);
+    ReportManager.test.info("JWT generated. Headers: " + headers);
+
+    Map<String, Object> responseMap = ApiUtils.callApi("py22.api.url", headers, null, "GET");
+    ReportManager.test.info("API call made, got response map: " + responseMap);
+
+    int statusCode = (int) responseMap.getOrDefault("statusCode", 0);
+    Map<String, String> flatResponse = (Map<String, String>) responseMap.get("responseBody");
+
+    String actualResponseCode = flatResponse.getOrDefault("responseCode", "");
+    String actualErrorCode = flatResponse.getOrDefault("errorCode", "");
+
+    ReportManager.test.info("HTTP Status: " + statusCode);
+    ReportManager.test.info("ActualResponseCode: " + actualResponseCode);
+    ReportManager.test.info("ActualErrorCode: " + actualErrorCode);
+
+    String result;
+    if (statusCode == 200) {
+        result = expectedResponseCode.equals(actualResponseCode) ? "PASS" : "FAIL";
+        ReportManager.test.info("VALIDATION: comparing expectedResponseCode [" + expectedResponseCode +
+                "] with actualResponseCode [" + actualResponseCode + "]");
+    } else {
+        result = expectedResponseCode.equals(actualErrorCode) ? "PASS" : "FAIL";
+        ReportManager.test.info("VALIDATION: comparing expectedResponseCode [" + expectedResponseCode +
+                "] with actualErrorCode [" + actualErrorCode + "]");
+    }
+
+    long durationSec = (System.currentTimeMillis() - start) / 1000;
+    ReportManager.test.info("Test Duration: " + durationSec + " seconds");
+    ReportManager.test.info("Result: " + result);
+
+    if ("PASS".equals(result)) {
+        ReportManager.test.pass("Test Passed");
+    } else {
+        ReportManager.test.fail("Test Failed");
+    }
+
+    ExcelUtils.writeResultWithDuration("src/test/resources/testdata.xlsx", "PY22", testId, result, durationSec);
+
+    ReportManager.extent.flush();
+}
+```
+
+***
+
+### 3. ApiUtils Logging Integration
+
+Ensure `ApiUtils` logs via the current test:
 
 ```java
 public static Map<String, Object> callApi(String configKey, Map<String, String> headers, String body, String method) throws Exception {
@@ -13,29 +107,26 @@ public static Map<String, Object> callApi(String configKey, Map<String, String> 
     if (apiUrl == null || apiUrl.isBlank())
         throw new RuntimeException("Missing API URL for key: " + configKey);
 
+    if (ReportManager.test != null) ReportManager.test.info("API URL: " + apiUrl);
+    if (ReportManager.test != null) ReportManager.test.info("HTTP Method: " + method);
+    if (ReportManager.test != null) ReportManager.test.info("Headers: " + headers);
+    if (ReportManager.test != null && body != null) ReportManager.test.info("Request Body: " + body);
+
     URL url = new URL(apiUrl);
     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
     conn.setRequestMethod(method);
     conn.setConnectTimeout(10000);
     conn.setReadTimeout(15000);
 
-    // --- Add headers ---
     for (Map.Entry<String, String> entry : headers.entrySet()) {
         conn.setRequestProperty(entry.getKey(), entry.getValue());
     }
 
-    if ((method.equalsIgnoreCase("POST") || method.equalsIgnoreCase("PUT")) && body != null && !body.isEmpty()) {
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/json");
-        try (OutputStream os = conn.getOutputStream()) {
-            os.write(body.getBytes(StandardCharsets.UTF_8));
-            os.flush();
-        }
-    }
-
     int statusCode = conn.getResponseCode();
+    if (ReportManager.test != null) ReportManager.test.info("HTTP Status Code: " + statusCode);
+
     BufferedReader reader = new BufferedReader(new InputStreamReader(
-        statusCode < 400 ? conn.getInputStream() : conn.getErrorStream()
+            statusCode < 400 ? conn.getInputStream() : conn.getErrorStream()
     ));
 
     StringBuilder response = new StringBuilder();
@@ -43,89 +134,45 @@ public static Map<String, Object> callApi(String configKey, Map<String, String> 
     while ((line = reader.readLine()) != null) response.append(line);
     reader.close();
 
+    if (ReportManager.test != null) ReportManager.test.info("Raw Response: " + response);
+
     Map<String, Object> result = new HashMap<>();
     result.put("statusCode", statusCode);
-
     Map<String, String> flat = JsonUtils.jsonToFlatMap(response.toString());
     result.put("responseBody", flat);
+
+    if (ReportManager.test != null) ReportManager.test.info("Flattened Response: " + flat);
 
     return result;
 }
 ```
 
-
 ***
 
-### TestExecutor.txt
+### 4. pY22Tests Integration
 
-- **Issue:** PROD_ID construction produces unexpected results if either branchNum or accNum is empty, as it uses padding which can result in a string with just a space, or unintended concatenations.
-- **Fix:** Make PROD_ID assembly more robust, avoid extra spaces.
-
-```java
-String prodId = "";
-if (!branchNum.isEmpty() && !accNum.isEmpty()) {
-    prodId = branchNum + accNum;
-} else if (!branchNum.isEmpty()) {
-    prodId = branchNum;
-} else if (!accNum.isEmpty()) {
-    prodId = accNum;
-}
-```
-
-- **Issue:** Validation compares the expectedResponseCode both to actualResponseCode and actualErrorCode, which can cause false positives if errorCode matches when not appropriate. It should compare expectedStatus (from data) with actual response, not expectedResponseCode with errorCode for error cases.
-- **Fix:** Use `expectedStatus` for status comparison and expected/actual response code comparison logic carefully.
-
-```java
-String result;
-if (statusCode == 200) {
-    result = expectedResponseCode.equals(actualResponseCode) ? "PASS" : "FAIL";
-} else {
-    result = expectedStatus.equalsIgnoreCase("FAIL") && actualErrorCode != null ? "PASS" : "FAIL";
-}
-```
-
-
-***
-
-### pY22Tests.txt
-
-- **Issue:** The test method names and IDs used in Excel fetching are inconsistent and may create confusion or mapping errors. Names must be consistently used across Excel, code, and method annotation.
-- **Fix:** Ensure the test ID patterns in method names and Excel references match exactly.
+Update your test classes:
 
 ```java
 @Test(description = "TC01 - Valid PROD_ID")
 public void TC01_Valid_PROD_ID() throws Exception {
-    Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC01_Valid_PROD_ID");
+    ReportManager.test = ReportManager.extent.createTest("PY22 TC01 Valid PROD_ID");
+    ReportManager.test.info("Starting test: TC01_Valid_PROD_ID");
+    Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC01_SC01_PY22_Valid_PROD_ID");
     TestExecutor.runCase(data);
-}
-
-@Test(description = "TC02 - Mandatory Field Validation (Branch number)")
-public void TC02_MandatoryField_Validation_BranchNumber() throws Exception {
-    Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC02_MandatoryField_Validation_BranchNumber");
-    TestExecutor.runCase(data);
-}
-
-@Test(description = "TC03 - Mandatory Field Validation (Account number)")
-public void TC03_MandatoryField_Validation_AccountNumber() throws Exception {
-    Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC03_MandatoryField_Validation_AccountNumber");
-    TestExecutor.runCase(data);
+    ReportManager.test.info("Finished test: TC01_Valid_PROD_ID");
 }
 ```
-
 
 ***
 
 ### Summary Table
 
-| File              | Issue Description                               | Suggested Fixes                                                  |
-|-------------------|------------------------------------------------|------------------------------------------------------------------|
-| ApiUtils.txt      | No support for POST/PUT body; content-type     | Add body support, use correct content-type for JSON requests     |
-| TestExecutor.txt  | Incorrect PROD_ID construction; validation     | Rework PROD_ID logic, improve error/response validation          |
-| pY22Tests.txt     | Test IDs/method maps may not match Excel sheet | Standardize naming between Excel lookup and method definitions   |
+| Step           | Change                                                                    |
+|----------------|---------------------------------------------------------------------------|
+| Reporter Setup | Use `ExtentSparkReporter` in a shared `ReportManager`                     |
+| Logging        | Log every test and API workflow step using `ReportManager.test`           |
+| Flushing       | Call `ReportManager.extent.flush()` after each test to update the report  |
 
-Review and apply these fixes to make the framework logic robust for test automation[1][2][3].
+With these changes, your Spark report will include all relevant details — test input, headers, API calls, payload, validation steps, comparison, and result explanations — in a clean, graphical HTML dashboard. This greatly aids debugging and test root cause analysis.
 
-Citations:
-[1] TestExecutor.txt https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/88928485/d124c733-dcc4-4321-8d18-6c15c0e65a7c/TestExecutor.txt
-[2] pY22Tests.txt https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/88928485/4a22b2ad-48b7-4da4-8ec3-1a46337c3bb0/pY22Tests.txt
-[3] ApiUtils.txt https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/88928485/504c90e4-ac15-44f9-9602-eeb2c42dff84/ApiUtils.txt
