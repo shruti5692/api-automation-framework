@@ -1,0 +1,131 @@
+I am working on automation framework for testing purpose. I have Utils mentioned in these files. Fix the logical errors in these files
+
+Here are the logical errors found in the provided files, along with suggested fixes for each utility to ensure better reliability and correct behavior in your test automation framework[1][2][3].
+
+### ApiUtils.txt
+
+- **Issue:** The API call does not support sending a request body for POST/PUT methods. The code always makes a GET request ignoring the body, which is not appropriate for POST/PUT APIs.
+- **Fix:** Add support for writing a body when the method is POST or PUT, and set the correct `Content-Type` header.
+
+```java
+public static Map<String, Object> callApi(String configKey, Map<String, String> headers, String body, String method) throws Exception {
+    String apiUrl = ConfigReader.get(configKey);
+    if (apiUrl == null || apiUrl.isBlank())
+        throw new RuntimeException("Missing API URL for key: " + configKey);
+
+    URL url = new URL(apiUrl);
+    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+    conn.setRequestMethod(method);
+    conn.setConnectTimeout(10000);
+    conn.setReadTimeout(15000);
+
+    // --- Add headers ---
+    for (Map.Entry<String, String> entry : headers.entrySet()) {
+        conn.setRequestProperty(entry.getKey(), entry.getValue());
+    }
+
+    if ((method.equalsIgnoreCase("POST") || method.equalsIgnoreCase("PUT")) && body != null && !body.isEmpty()) {
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(body.getBytes(StandardCharsets.UTF_8));
+            os.flush();
+        }
+    }
+
+    int statusCode = conn.getResponseCode();
+    BufferedReader reader = new BufferedReader(new InputStreamReader(
+        statusCode < 400 ? conn.getInputStream() : conn.getErrorStream()
+    ));
+
+    StringBuilder response = new StringBuilder();
+    String line;
+    while ((line = reader.readLine()) != null) response.append(line);
+    reader.close();
+
+    Map<String, Object> result = new HashMap<>();
+    result.put("statusCode", statusCode);
+
+    Map<String, String> flat = JsonUtils.jsonToFlatMap(response.toString());
+    result.put("responseBody", flat);
+
+    return result;
+}
+```
+
+
+***
+
+### TestExecutor.txt
+
+- **Issue:** PROD_ID construction produces unexpected results if either branchNum or accNum is empty, as it uses padding which can result in a string with just a space, or unintended concatenations.
+- **Fix:** Make PROD_ID assembly more robust, avoid extra spaces.
+
+```java
+String prodId = "";
+if (!branchNum.isEmpty() && !accNum.isEmpty()) {
+    prodId = branchNum + accNum;
+} else if (!branchNum.isEmpty()) {
+    prodId = branchNum;
+} else if (!accNum.isEmpty()) {
+    prodId = accNum;
+}
+```
+
+- **Issue:** Validation compares the expectedResponseCode both to actualResponseCode and actualErrorCode, which can cause false positives if errorCode matches when not appropriate. It should compare expectedStatus (from data) with actual response, not expectedResponseCode with errorCode for error cases.
+- **Fix:** Use `expectedStatus` for status comparison and expected/actual response code comparison logic carefully.
+
+```java
+String result;
+if (statusCode == 200) {
+    result = expectedResponseCode.equals(actualResponseCode) ? "PASS" : "FAIL";
+} else {
+    result = expectedStatus.equalsIgnoreCase("FAIL") && actualErrorCode != null ? "PASS" : "FAIL";
+}
+```
+
+
+***
+
+### pY22Tests.txt
+
+- **Issue:** The test method names and IDs used in Excel fetching are inconsistent and may create confusion or mapping errors. Names must be consistently used across Excel, code, and method annotation.
+- **Fix:** Ensure the test ID patterns in method names and Excel references match exactly.
+
+```java
+@Test(description = "TC01 - Valid PROD_ID")
+public void TC01_Valid_PROD_ID() throws Exception {
+    Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC01_Valid_PROD_ID");
+    TestExecutor.runCase(data);
+}
+
+@Test(description = "TC02 - Mandatory Field Validation (Branch number)")
+public void TC02_MandatoryField_Validation_BranchNumber() throws Exception {
+    Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC02_MandatoryField_Validation_BranchNumber");
+    TestExecutor.runCase(data);
+}
+
+@Test(description = "TC03 - Mandatory Field Validation (Account number)")
+public void TC03_MandatoryField_Validation_AccountNumber() throws Exception {
+    Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC03_MandatoryField_Validation_AccountNumber");
+    TestExecutor.runCase(data);
+}
+```
+
+
+***
+
+### Summary Table
+
+| File              | Issue Description                               | Suggested Fixes                                                  |
+|-------------------|------------------------------------------------|------------------------------------------------------------------|
+| ApiUtils.txt      | No support for POST/PUT body; content-type     | Add body support, use correct content-type for JSON requests     |
+| TestExecutor.txt  | Incorrect PROD_ID construction; validation     | Rework PROD_ID logic, improve error/response validation          |
+| pY22Tests.txt     | Test IDs/method maps may not match Excel sheet | Standardize naming between Excel lookup and method definitions   |
+
+Review and apply these fixes to make the framework logic robust for test automation[1][2][3].
+
+Citations:
+[1] TestExecutor.txt https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/88928485/d124c733-dcc4-4321-8d18-6c15c0e65a7c/TestExecutor.txt
+[2] pY22Tests.txt https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/88928485/4a22b2ad-48b7-4da4-8ec3-1a46337c3bb0/pY22Tests.txt
+[3] ApiUtils.txt https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/88928485/504c90e4-ac15-44f9-9602-eeb2c42dff84/ApiUtils.txt
