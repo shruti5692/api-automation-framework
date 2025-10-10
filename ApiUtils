@@ -1,117 +1,49 @@
 package com.framework.utils;
 
-import okhttp3.*;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.*;
-import java.io.FileInputStream;
-import java.util.concurrent.TimeUnit;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-/**
- * ✅ ApiUtils - Minimal, Config-driven, and Reusable
- *
- * Responsibilities:
- *  - Fetch base URL from config.properties
- *  - Use HeaderUtils to build headers (including JWT)
- *  - Dynamically send GET/POST/PUT/DELETE requests
- *  - Store API response as:
- *       → Map<String, String>  (for object)
- *       → List<Map<String, String>> (for array)
- */
 public class ApiUtils {
-
-    private static final OkHttpClient client = new OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .build();
 
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    // Load config.properties just once
-    private static final Properties config = new Properties();
-    static {
-        try (FileInputStream fis = new FileInputStream("src/test/resources/config.properties")) {
-            config.load(fis);
-        } catch (Exception e) {
-            System.err.println("[ERROR] Failed to load config.properties: " + e.getMessage());
-        }
-    }
+    public static Map<String, Object> callApi(String configKey, Map<String, String> headers, String body, String method) throws Exception {
+        String apiUrl = ConfigReader.get(configKey);
+        if (apiUrl == null || apiUrl.isBlank())
+            throw new RuntimeException("Missing API URL for key: " + configKey);
 
-    /**
-     * Calls the given API and returns structured response.
-     *
-     * @param endpointKey The key from config.properties (e.g. "py22.api.url")
-     * @param headers     Header map (usually from HeaderUtils)
-     * @param bodyJson    JSON request body (nullable)
-     * @param method      HTTP method: GET/POST/PUT/DELETE
-     * @return Map containing status, body, duration, and parsed JSON
-     */
-    public static Map<String, Object> callApi(String endpointKey,
-                                              Map<String, String> headers,
-                                              String bodyJson,
-                                              String method) {
+        URL url = new URL(apiUrl);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod(method);
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(15000);
 
-        Map<String, Object> result = new LinkedHashMap<>();
-        String url = config.getProperty(endpointKey, "").trim();
-
-        if (url.isEmpty()) {
-            result.put("error", "❌ URL not found for key: " + endpointKey);
-            return result;
+        // --- Add headers ---
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            conn.setRequestProperty(entry.getKey(), entry.getValue());
         }
 
-        try {
-            // --- Build headers ---
-            Headers.Builder headerBuilder = new Headers.Builder();
-            headers.forEach((k, v) -> {
-                if (v != null && !v.isBlank()) headerBuilder.add(k, v);
-            });
+        // --- Read response ---
+        int statusCode = conn.getResponseCode();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(
+                statusCode < 400 ? conn.getInputStream() : conn.getErrorStream()
+        ));
 
-            // --- Prepare body if needed ---
-            RequestBody body = null;
-            if (bodyJson != null && !bodyJson.isBlank()
-                    && !method.equalsIgnoreCase("GET")) {
-                body = RequestBody.create(bodyJson, MediaType.parse("application/json"));
-            }
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) response.append(line);
+        reader.close();
 
-            // --- Build request ---
-            Request.Builder reqBuilder = new Request.Builder()
-                    .url(url)
-                    .headers(headerBuilder.build());
+        Map<String, Object> result = new HashMap<>();
+        result.put("statusCode", statusCode);
 
-            switch (method.toUpperCase()) {
-                case "POST": reqBuilder.post(body != null ? body : RequestBody.create(new byte[0])); break;
-                case "PUT": reqBuilder.put(body != null ? body : RequestBody.create(new byte[0])); break;
-                case "DELETE": reqBuilder.delete(body != null ? body : RequestBody.create(new byte[0])); break;
-                default: reqBuilder.get(); break;
-            }
-
-            // --- Execute ---
-            long start = System.currentTimeMillis();
-            Response response = client.newCall(reqBuilder.build()).execute();
-            long duration = (System.currentTimeMillis() - start) / 1000;
-
-            int statusCode = response.code();
-            String rawBody = response.body() != null ? response.body().string() : "";
-
-            // --- Parse response JSON ---
-            Map<String, String> responseMap = new LinkedHashMap<>();
-            List<Map<String, String>> responseList = new ArrayList<>();
-
-            if (rawBody.trim().startsWith("[")) {
-                responseList = JsonUtils.jsonToListOfMaps(rawBody);
-            } else {
-                responseMap = JsonUtils.jsonToFlatMap(rawBody);
-            }
-
-            result.put("statusCode", statusCode);
-            result.put("durationSec", duration);
-            result.put("rawBody", rawBody);
-            result.put("responseMap", responseMap);
-            result.put("responseList", responseList);
-
-        } catch (Exception e) {
-            result.put("error", e.getMessage());
-            e.printStackTrace();
-        }
+        // Convert JSON to flat map
+        Map<String, String> flat = JsonUtils.jsonToFlatMap(response.toString());
+        result.put("responseBody", flat);
 
         return result;
     }
