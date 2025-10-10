@@ -1,31 +1,199 @@
 package com.framework.tests;
 
-import com.framework.core.TestExecutor;
 import com.framework.utils.ExcelUtils;
-import org.testng.annotations.Test;
+import com.framework.utils.JsonUtils;
+import com.framework.utils.JwtFetcher;
 
-import java.util.Map;
+import okhttp3.*;
+import org.testng.Assert;
+import org.testng.annotations.*;
+
+import java.util.*;
+import java.util.function.Function;
 
 public class PY22Tests {
 
     private static final String EXCEL_PATH = "src/test/resources/testdata.xlsx";
     private static final String SHEET = "PY22";
 
+    // Optional: keep a set of tests which require DB validations (if you have DB set up)
+    private static final Set<String> DB_REQUIRED_TESTS = Set.of("TC01_SC01_PY22_Valid_PROD_ID");
+
     @Test(description = "TC01 - Valid PROD_ID")
     public void TC01_Valid_PROD_ID() throws Exception {
-        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC01_SC01_PY22_Valid_PROD_ID");
-        TestExecutor.runCase(data);
+        runTestCase("TC01_SC01_PY22_Valid_PROD_ID");
     }
 
     @Test(description = "TC02 - Mandatory Field Validation (Branch number)")
     public void TC02_MandatoryField_Validation_BranchNumber() throws Exception {
-        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC02_SC01_PY22_MandatoryField_Validation_BranchNumber");
-        TestExecutor.runCase(data);
+        runTestCase("TC02_SC01_PY22_MandatoryField_Validation_BranchNumber");
     }
 
     @Test(description = "TC03 - Mandatory Field Validation (Account number)")
     public void TC03_MandatoryField_Validation_AccountNumber() throws Exception {
-        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC03_SC01_PY22_MandatoryField_Validation_AccountNumber");
-        TestExecutor.runCase(data);
+        runTestCase("TC03_SC01_PY22_MandatoryField_Validation_AccountNumber");
+    }
+
+    private void runTestCase(String testId) throws Exception {
+        long startTime = System.currentTimeMillis();
+
+        System.out.println("=== START TEST: " + testId + " ===");
+
+        Map<String, String> row = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, testId);
+
+        String branchNum = row.getOrDefault("Branch number", "").trim();
+        String accNum = row.getOrDefault("AccountNumber", "").trim();
+        String expectedStatus = row.getOrDefault("ExpectedStatus", "").trim();
+        String expectedResponseCode = row.getOrDefault("Response code", "").trim();
+        String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim();
+        String headersJson = row.getOrDefault("Headers", "").trim();
+
+        // Prepare PROD_ID
+        String prodId = "";
+        if (!branchNum.isEmpty() && !accNum.isEmpty()) prodId = branchNum + accNum;
+        else if (!branchNum.isEmpty()) prodId = branchNum;
+        else if (!accNum.isEmpty()) prodId = accNum;
+
+        System.out.println("PROD_ID constructed: " + prodId);
+
+        // Prepare headers
+        Headers.Builder headerBuilder = new Headers.Builder();
+        headerBuilder.add("Content-Type", "application/json");
+        headerBuilder.add("X-HSBC-Channel-Id", "OHB");
+        headerBuilder.add("X-HSBC-Request-Correlation-Id", "123498");
+        headerBuilder.add("X-HSBC-E2E-Trust-Token", JwtFetcher.generateToken());
+        headerBuilder.add("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)");
+        headerBuilder.add("X-HSBC-User-Id", "43998226");
+
+        if (!headersJson.isBlank()) {
+            try {
+                Map<String, String> extraHeaders = JsonUtils.jsonToFlatMap(headersJson);
+                extraHeaders.forEach(headerBuilder::add);
+                System.out.println("Merged extra headers from Excel: " + extraHeaders.keySet());
+            } catch (Exception ex) {
+                System.out.println("[WARN] Could not parse Headers JSON: " + ex.getMessage());
+            }
+        }
+        Headers headers = headerBuilder.build();
+
+        for (String name : headers.names()) {
+            System.out.println("Header: " + name + " = " + headers.get(name));
+        }
+
+        // Build URL (replace with your API endpoint)
+        String baseUrl = "https://api.example.com/py22"; // Replace with actual base URL or config
+        String url = baseUrl + "/" + (prodId.isEmpty() ? "%20" : prodId);
+
+        System.out.println("Calling URL: " + url);
+
+        // Call API using OkHttp
+        OkHttpClient client = new OkHttpClient();
+        Request request = new Request.Builder()
+                .url(url)
+                .headers(headers)
+                .get()
+                .build();
+
+        Response response;
+        String responseBody;
+        int statusCode;
+
+        try {
+            response = client.newCall(request).execute();
+            statusCode = response.code();
+            responseBody = response.body() != null ? response.body().string() : "";
+
+            System.out.println("HTTP Status: " + statusCode);
+            System.out.println("Response Body (truncated): " 
+                + (responseBody.length() > 800 ? responseBody.substring(0, 800) + "..." : responseBody));
+        } catch (Exception e) {
+            System.err.println("[ERROR] HTTP call failed: " + e.getMessage());
+            throw e;
+        }
+
+        // Validate expected HTTP status
+        if (!expectedStatus.isEmpty()) {
+            int expectedHttpStatus = Integer.parseInt(expectedStatus);
+            Assert.assertEquals(statusCode, expectedHttpStatus, "HTTP status mismatch");
+            System.out.println("Expected HTTP status matched: " + expectedHttpStatus);
+        }
+
+        // Flatten response JSON into a map
+        List<Map<String, String>> apiDataList = Collections.emptyList();
+        Map<String, String> apiFlatMap = new LinkedHashMap<>();
+
+        try {
+            apiDataList = JsonUtils.jsonToListOfMaps(responseBody);
+            for (Map<String, String> item : apiDataList) {
+                for (Map.Entry<String, String> entry : item.entrySet()) {
+                    apiFlatMap.putIfAbsent(entry.getKey(), entry.getValue());
+                }
+            }
+            System.out.println("API Data List size: " + apiDataList.size());
+            System.out.println("Flattened API keys: " + apiFlatMap.keySet());
+        } catch (Exception e) {
+            System.out.println("[WARN] Failed to parse API JSON: " + e.getMessage());
+        }
+
+        // Field-wise validation method
+        boolean pass = true;
+        StringBuilder failReasons = new StringBuilder();
+
+        Function<String, String> normalize = s -> {
+            if (s == null) return "";
+            return s.replaceAll("\\[\\d+\\]", "")
+                    .replaceAll("[^A-Za-z0-9]", "")
+                    .toLowerCase().trim();
+        };
+
+        if (!expectedFieldsJson.isEmpty()) {
+            Map<String, String> expectedFields;
+            try {
+                expectedFields = JsonUtils.jsonToFlatMap(expectedFieldsJson);
+            } catch (Exception e) {
+                expectedFields = Collections.emptyMap();
+                System.out.println("[WARN] Failed to parse ExpectedFields JSON: " + e.getMessage());
+            }
+
+            for (Map.Entry<String, String> expectedEntry : expectedFields.entrySet()) {
+                String field = expectedEntry.getKey();
+                String expectedVal = expectedEntry.getValue();
+
+                Optional<Map.Entry<String, String>> match = apiFlatMap.entrySet().stream()
+                    .filter(e -> normalize.apply(e.getKey()).endsWith(normalize.apply(field)))
+                    .findFirst();
+
+                String actualVal = match.map(Map.Entry::getValue).orElse(null);
+
+                System.out.printf("Validation -> Field: %-20s | Expected: %-15s | Actual: %-15s%n", field, expectedVal, actualVal);
+
+                if (!equalsIgnoreCaseTrim(expectedVal, actualVal)) {
+                    pass = false;
+                    failReasons.append(String.format("
+Field '%s' mismatch. Expected: %s, Actual: %s", field, expectedVal, actualVal));
+                }
+            }
+        } else {
+            System.out.println("No expected fields provided for field-wise validation.");
+        }
+
+        long durationSec = (System.currentTimeMillis() - startTime) / 1000;
+
+        if (pass) {
+            System.out.println("[PASS] Test passed for testId " + testId + " in " + durationSec + " sec");
+            ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET, testId, "PASS", durationSec);
+        } else {
+            System.out.println("[FAIL] Test failed: " + failReasons);
+            ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET, testId, "FAIL: " + failReasons.toString(), durationSec);
+            Assert.fail(failReasons.toString());
+        }
+
+        System.out.println("=== END TEST: " + testId + " ===");
+    }
+
+    private boolean equalsIgnoreCaseTrim(String a, String b) {
+        if (a == null && b == null) return true;
+        if (a == null || b == null) return false;
+        return a.trim().equalsIgnoreCase(b.trim());
     }
 }
