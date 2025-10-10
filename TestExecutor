@@ -1,0 +1,63 @@
+package com.framework.core;
+
+import com.framework.utils.*;
+import java.util.*;
+
+public class TestExecutor {
+
+    public static void runCase(Map<String, String> row) throws Exception {
+
+        String testId = row.getOrDefault("TestCaseID", "").trim();
+        String branchNum = row.getOrDefault("Branch number", "").trim();
+        String accNum = row.getOrDefault("AccountNumber", "").trim();
+        String expectedStatus = row.getOrDefault("ExpectedStatus", "").trim();
+        String expectedResponseCode = row.getOrDefault("Response code", "").trim();
+
+        // --- Construct PROD_ID dynamically ---
+        String prodId;
+        if (branchNum.isEmpty() && accNum.isEmpty()) prodId = " ";
+        else if (branchNum.isEmpty()) prodId = " " + accNum;
+        else if (accNum.isEmpty()) prodId = branchNum + " ";
+        else prodId = branchNum + accNum;
+
+        System.out.println("\n🚀 Running TestCase: " + testId);
+        System.out.println("➡️ PROD_ID: [" + prodId + "]");
+
+        long start = System.currentTimeMillis();
+
+        // --- Prepare JWT and headers ---
+        String jwt = JwtFetcher.generateToken();
+        Map<String, String> headers = HeaderUtils.buildHeaders(jwt, prodId);
+
+        // --- API call ---
+        Map<String, Object> responseMap = ApiUtils.callApi("py22.api.url", headers, null, "GET");
+
+        // --- Extract response info ---
+        int statusCode = (int) responseMap.getOrDefault("statusCode", 0);
+        Map<String, String> flatResponse = (Map<String, String>) responseMap.get("responseBody");
+
+        String actualResponseCode = flatResponse.getOrDefault("responseCode", "");
+        String actualErrorCode = flatResponse.getOrDefault("errorCode", "");
+
+        // --- Validation ---
+        String result;
+        if (statusCode == 200) {
+            result = expectedResponseCode.equals(actualResponseCode) ? "PASS" : "FAIL";
+        } else {
+            result = expectedResponseCode.equals(actualErrorCode) ? "PASS" : "FAIL";
+        }
+
+        long durationSec = (System.currentTimeMillis() - start) / 1000;
+        System.out.printf("✅ Result: %s | HTTP: %s | RespCode: %s | ErrCode: %s | Duration: %ds%n",
+                result, statusCode, actualResponseCode, actualErrorCode, durationSec);
+
+        // --- Write to Excel ---
+        ExcelUtils.writeResultWithDuration(
+                "src/test/resources/testdata.xlsx",
+                "PY22",
+                testId,
+                result,
+                durationSec
+        );
+    }
+}
