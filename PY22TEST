@@ -1,33 +1,37 @@
 package com.framework.tests;
 
-import com.framework.core.RunThis;
 import com.framework.utils.*;
 import org.testng.annotations.*;
-
 import java.util.*;
 
-@Listeners(com.framework.core.RunThis.Filter.class)
 public class PY22Test {
 
-    private static final String EXCEL_PATH = "src/test/resources/testdata/PY22.xlsx";
+    private static final String EXCEL_PATH = "src/test/resources/testdata.xlsx";
     private static final String SHEET_NAME = "PY22";
 
     @DataProvider(name = "py22Data")
-    public Object[][] py22Data() throws Exception {
-        List<Map<String, String>> data = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
-        Object[][] arr = new Object[data.size()][1];
-        for (int i = 0; i < data.size(); i++) arr[i][0] = data.get(i);
-        return arr;
-    }
-
-    @RunThis(id = "PY22_TC01")  // ✅ only this test will run
-    @Test(dataProvider = "py22Data")
-    public void callPY22Api(Map<String, String> row) throws Exception {
-        ApiUtils.runApiTest(row);
+    public Object[][] getData() throws Exception {
+        List<Map<String, String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
+        return rows.stream().map(row -> new Object[]{row}).toArray(Object[][]::new);
     }
 
     @Test(dataProvider = "py22Data")
-    public void anotherApi(Map<String, String> row) throws Exception {
-        ApiUtils.runApiTest(row);  // 🚫 will be skipped automatically
+    public void runPY22(Map<String, String> row) throws Exception {
+        String testId = row.get("TestCaseID");
+        String prodId = row.get("Prod_ID");
+        String expectedStatus = row.get("ExpectedStatus");
+
+        long start = System.currentTimeMillis();
+
+        String jwt = JwtFetcher.generateToken();
+        Map<String, String> headers = HeaderUtils.buildHeaders(jwt, prodId);
+
+        Map<String, Object> resp = ApiUtils.callApi("py22.api.url", headers, null, "GET");
+
+        int actualStatus = (int) resp.getOrDefault("statusCode", 0);
+        String result = (String.valueOf(actualStatus).equals(expectedStatus)) ? "PASS" : "FAIL";
+
+        long duration = (System.currentTimeMillis() - start) / 1000;
+        ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testId, result, duration);
     }
 }
