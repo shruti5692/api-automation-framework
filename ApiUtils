@@ -2,106 +2,117 @@ package com.framework.utils;
 
 import okhttp3.*;
 import java.util.*;
+import java.io.FileInputStream;
+import java.util.concurrent.TimeUnit;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Generic API utility — calls any HTTP endpoint
- * using dynamic headers/body from Excel, and returns structured results.
+ * ✅ ApiUtils - Minimal, Config-driven, and Reusable
  *
  * Responsibilities:
- * ✅ Build request (URL, headers, body)
- * ✅ Execute request
- * ✅ Return response (status + flattened JSON body)
- *
- * Works seamlessly with:
- * - ExcelUtils → for reading data
- * - JsonUtils  → for flattening JSON
+ *  - Fetch base URL from config.properties
+ *  - Use HeaderUtils to build headers (including JWT)
+ *  - Dynamically send GET/POST/PUT/DELETE requests
+ *  - Store API response as:
+ *       → Map<String, String>  (for object)
+ *       → List<Map<String, String>> (for array)
  */
 public class ApiUtils {
 
-    private static final OkHttpClient client = new OkHttpClient();
+    private static final OkHttpClient client = new OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build();
+
     private static final ObjectMapper mapper = new ObjectMapper();
 
+    // Load config.properties just once
+    private static final Properties config = new Properties();
+    static {
+        try (FileInputStream fis = new FileInputStream("src/test/resources/config.properties")) {
+            config.load(fis);
+        } catch (Exception e) {
+            System.err.println("[ERROR] Failed to load config.properties: " + e.getMessage());
+        }
+    }
+
     /**
-     * Calls a REST API using the given test data row.
+     * Calls the given API and returns structured response.
      *
-     * @param row Excel data row (from ExcelUtils.readSheet)
-     * @param jwtToken dynamic JWT token (for headers)
-     * @return Map with keys: "statusCode", "rawBody", "response"
+     * @param endpointKey The key from config.properties (e.g. "py22.api.url")
+     * @param headers     Header map (usually from HeaderUtils)
+     * @param bodyJson    JSON request body (nullable)
+     * @param method      HTTP method: GET/POST/PUT/DELETE
+     * @return Map containing status, body, duration, and parsed JSON
      */
-    public static Map<String, Object> callApi(Map<String, String> row, String jwtToken) {
-        Map<String, Object> result = new HashMap<>();
+    public static Map<String, Object> callApi(String endpointKey,
+                                              Map<String, String> headers,
+                                              String bodyJson,
+                                              String method) {
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        String url = config.getProperty(endpointKey, "").trim();
+
+        if (url.isEmpty()) {
+            result.put("error", "❌ URL not found for key: " + endpointKey);
+            return result;
+        }
+
         try {
-            // 1️⃣ Extract URL (mandatory)
-            String url = row.getOrDefault("URL", "").trim();
-            if (url.isEmpty()) throw new IllegalArgumentException("URL is missing in Excel row");
-
-            // 2️⃣ Extract method (GET/POST/PUT...) — default GET
-            String method = row.getOrDefault("Method", "GET").trim().toUpperCase();
-
-            // 3️⃣ Prepare headers
+            // --- Build headers ---
             Headers.Builder headerBuilder = new Headers.Builder();
-            for (Map.Entry<String, String> entry : row.entrySet()) {
-                String key = entry.getKey();
-                if (key.startsWith("Header_")) { // Example: Header_X-HSBC-User-Id
-                    String headerName = key.substring(7);
-                    String headerValue = entry.getValue().trim();
-                    // inject dynamic JWT token
-                    if (headerName.equalsIgnoreCase("X-HSBC-E2E-Trust-Token")) {
-                        headerValue = jwtToken;
-                    }
-                    headerBuilder.add(headerName, headerValue);
-                }
-            }
+            headers.forEach((k, v) -> {
+                if (v != null && !v.isBlank()) headerBuilder.add(k, v);
+            });
 
-            // 4️⃣ Prepare request body (optional)
+            // --- Prepare body if needed ---
             RequestBody body = null;
-            String bodyStr = row.getOrDefault("Body", "").trim();
-            if (!bodyStr.isEmpty() && !method.equals("GET")) {
-                body = RequestBody.create(bodyStr, MediaType.parse("application/json"));
+            if (bodyJson != null && !bodyJson.isBlank()
+                    && !method.equalsIgnoreCase("GET")) {
+                body = RequestBody.create(bodyJson, MediaType.parse("application/json"));
             }
 
-            // 5️⃣ Build request
-            Request.Builder requestBuilder = new Request.Builder()
+            // --- Build request ---
+            Request.Builder reqBuilder = new Request.Builder()
                     .url(url)
                     .headers(headerBuilder.build());
 
-            switch (method) {
-                case "POST":
-                    requestBuilder.post(body != null ? body : RequestBody.create(new byte[0]));
-                    break;
-                case "PUT":
-                    requestBuilder.put(body != null ? body : RequestBody.create(new byte[0]));
-                    break;
-                case "DELETE":
-                    requestBuilder.delete(body != null ? body : RequestBody.create(new byte[0]));
-                    break;
-                default:
-                    requestBuilder.get();
+            switch (method.toUpperCase()) {
+                case "POST": reqBuilder.post(body != null ? body : RequestBody.create(new byte[0])); break;
+                case "PUT": reqBuilder.put(body != null ? body : RequestBody.create(new byte[0])); break;
+                case "DELETE": reqBuilder.delete(body != null ? body : RequestBody.create(new byte[0])); break;
+                default: reqBuilder.get(); break;
             }
 
-            // 6️⃣ Execute
+            // --- Execute ---
             long start = System.currentTimeMillis();
-            try (Response response = client.newCall(requestBuilder.build()).execute()) {
-                long end = System.currentTimeMillis();
+            Response response = client.newCall(reqBuilder.build()).execute();
+            long duration = (System.currentTimeMillis() - start) / 1000;
 
-                int statusCode = response.code();
-                String rawBody = response.body() != null ? response.body().string() : "";
+            int statusCode = response.code();
+            String rawBody = response.body() != null ? response.body().string() : "";
 
-                // 7️⃣ Parse response JSON to flat map
-                Map<String, String> flatMap = JsonUtils.jsonToFlatMap(rawBody);
+            // --- Parse response JSON ---
+            Map<String, String> responseMap = new LinkedHashMap<>();
+            List<Map<String, String>> responseList = new ArrayList<>();
 
-                // 8️⃣ Return structured map
-                result.put("statusCode", statusCode);
-                result.put("rawBody", rawBody);
-                result.put("response", flatMap);
-                result.put("durationSec", (end - start) / 1000.0);
+            if (rawBody.trim().startsWith("[")) {
+                responseList = JsonUtils.jsonToListOfMaps(rawBody);
+            } else {
+                responseMap = JsonUtils.jsonToFlatMap(rawBody);
             }
+
+            result.put("statusCode", statusCode);
+            result.put("durationSec", duration);
+            result.put("rawBody", rawBody);
+            result.put("responseMap", responseMap);
+            result.put("responseList", responseList);
 
         } catch (Exception e) {
             result.put("error", e.getMessage());
             e.printStackTrace();
         }
+
         return result;
     }
 }
