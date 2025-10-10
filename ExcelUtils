@@ -175,4 +175,18 @@ public class ExcelUtils {
         }
         return map;
     }
+/**
+ * Fetches a single row from Excel based on TestCaseID.
+ * Returns a Map<header, value> or null if not found.
+ */
+public static Map<String, String> getRowByTestId(String excelPath, String sheetName, String testCaseId) throws Exception {
+    List<Map<String, String>> allRows = readSheet(excelPath, sheetName);
+    for (Map<String, String> row : allRows) {
+        String id = row.getOrDefault("TestCaseID", "").trim();
+        if (id.equalsIgnoreCase(testCaseId)) {
+            return row;
+        }
+    }
+    return null; // not found
+}
 }
