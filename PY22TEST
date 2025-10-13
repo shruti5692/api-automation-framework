@@ -1,44 +1,99 @@
-package com.framework.tests;
+package tests;
 
-import com.framework.utils.ConfigReader;
-import com.framework.utils.ExcelUtils;
+import com.aventstack.extentreports.*;
+import com.aventstack.extentreports.reporter.ExtentSparkReporter;
 import okhttp3.*;
+import org.framework.config.ConfigManager;
+import org.framework.utils.ExcelUtils;
+import org.json.JSONObject;
 import org.testng.Assert;
-import org.testng.annotations.DataProvider;
-import org.testng.annotations.Test;
+import org.testng.annotations.*;
 
+import java.lang.reflect.Method;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.Base64;
 
 public class PY22Test {
 
-    // ---------------------- Data Provider ----------------------
+    private static ExtentReports extent;
+    private ExtentTest test;
+    private final OkHttpClient client = new OkHttpClient();
+
+    private static final String EXCEL_PATH = ConfigManager.get("excel.path");
+    private static final String SHEET_NAME = "PY22";
+    private static final String PY22_URL = ConfigManager.get("py22.url");
+
+    // -------------------------- DATA PROVIDER --------------------------
     @DataProvider(name = "py22Data")
     public Object[][] py22Data() throws Exception {
-        String excelPath = ConfigReader.get("excel.path");
-        String sheetName = ConfigReader.get("py22.sheet");
-        List<Map<String, String>> data = ExcelUtils.readSheet(excelPath, sheetName);
-
-        Object[][] arr = new Object[data.size()][1];
-        for (int i = 0; i < data.size(); i++) arr[i][0] = data.get(i);
-        return arr;
+        List<Map<String, String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
+        Object[][] out = new Object[rows.size()][1];
+        for (int i = 0; i < rows.size(); i++) out[i][0] = rows.get(i);
+        return out;
     }
 
-    // ---------------------- API CALLER ----------------------
-    private Response callApi(String prodId, String username, String password) throws Exception {
-        OkHttpClient client = new OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .build();
+    // -------------------------- EXTENT SETUP --------------------------
+    @BeforeSuite
+    public void beforeSuite() {
+        ExtentSparkReporter spark = new ExtentSparkReporter("ExtentReport.html");
+        extent = new ExtentReports();
+        extent.attachReporter(spark);
+    }
 
-        String url = ConfigReader.get("py22.url");
+    @AfterSuite
+    public void afterSuite() {
+        extent.flush();
+    }
 
-        String basicAuth = "Basic " + Base64.getEncoder()
-                .encodeToString((username + ":" + password).getBytes());
+    @BeforeMethod
+    public void beforeMethod(Method method) {
+        test = extent.createTest(method.getName());
+    }
 
-        // ✅ Headers
-        Headers headers = new Headers.Builder()
+    // -------------------------- TEST CASE 1 --------------------------
+    @Test(dataProvider = "py22Data")
+    public void TC01_validateResponseCodeAndStatus(Map<String, String> row) throws Exception {
+        String testId = row.getOrDefault("TestCaseID", "").trim();
+        if (!"TC01".equalsIgnoreCase(testId)) return; // Run only TC01
+
+        logBoth("=== Running PY22 TestCase: " + testId + " ===");
+
+        String branchNum = row.getOrDefault("BranchNumber", "").trim();
+        String accNum = row.getOrDefault("AccountNumber", "").trim();
+        String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
+        String expResponseCode = row.getOrDefault("ResponseCode", "").trim();
+
+        String prodId = (!branchNum.isEmpty() && !accNum.isEmpty()) ? branchNum + accNum : " ";
+        logBoth("Constructed PROD_ID: " + prodId);
+
+        // 🔹 Call API
+        Response response = callApi(prodId);
+
+        int actualCode = response.code();
+        String body = response.body() != null ? response.body().string() : "";
+        logBoth("HTTP Status: " + actualCode);
+        logBoth("Response Body (truncated): " + (body.length() > 400 ? body.substring(0, 400) + "..." : body));
+
+        // 🔹 Assertions
+        try {
+            Assert.assertEquals(String.valueOf(actualCode), expResponseCode, "Response code mismatch");
+            Assert.assertTrue(body.contains(expStatusStr), "Expected status not found in response!");
+            logPass("Test Passed for: " + testId);
+        } catch (AssertionError e) {
+            logFail("Test Failed for: " + testId + " → " + e.getMessage());
+            throw e;
+        }
+    }
+
+    // -------------------------- API CALL FUNCTION --------------------------
+    private Response callApi(String prodId) throws Exception {
+        logBoth("Step: Preparing HTTP headers for API call");
+
+        // Basic Auth header
+        String credentials = "tavonh:Raa@1126";
+        String basicAuth = "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes());
+
+        Headers.Builder headerBuilder = new Headers.Builder()
                 .add("Authorization", basicAuth)
                 .add("Content-Type", "application/json")
                 .add("X-HSBC-Locale", "en_GB")
@@ -49,57 +104,44 @@ public class PY22Test {
                 .add("X-HSBC-Channel-Id", "OHB")
                 .add("X-HSBC-Src-Device-Id", "1234")
                 .add("X-HSBC-Session-Correlation-Id", "q2")
-                .add("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_181)")
-                .build();
+                .add("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)")
+                .add("X-HSBC-Request-Correlation-Id", "shubham")
+                .add("X-HSBC-Consumer-Id", "GBHBEU_CMB.MOBILE")
+                .add("X-HSBC-IP-Id", "136.46.24.54")
+                .add("X-HSBC-Bene-Type", "RSP9")
+                .add("X-HSBC-Client-Id", "25b5dfb6bb584c7088010820884f15d2")
+                .add("X-HSBC-Client-Secret", "68C1518505514180b1211DA13396AD1C");
 
-        // ✅ Body (if needed)
+        Headers headers = headerBuilder.build();
+
         String bodyJson = "{\"productId\":\"" + prodId + "\"}";
         RequestBody body = RequestBody.create(bodyJson, MediaType.parse("application/json"));
 
+        String url = PY22_URL;
+        logBoth("Step: Calling PY22 API → " + url);
+
         Request request = new Request.Builder()
                 .url(url)
-                .post(body)
                 .headers(headers)
+                .post(body)
                 .build();
 
         return client.newCall(request).execute();
     }
 
-    // ---------------------- TEST CASE 1 ----------------------
-    @Test(dataProvider = "py22Data")
-    public void TC01_validateResponseCodeAndStatus(Map<String, String> row) throws Exception {
-        String testId = row.getOrDefault("TestCaseID", "").trim();
-        if (!"TC01".equalsIgnoreCase(testId)) return;  // only for TC01
-
-        log("=== Running TestCase: " + testId + " ===");
-
-        String branchNum = row.getOrDefault("BranchNumber", "").trim();
-        String accNum = row.getOrDefault("AccountNumber", "").trim();
-        String expStatus = row.getOrDefault("ExpectedStatus", "").trim();
-        String expResponseCode = row.getOrDefault("ResponseCode", "").trim();
-
-        String prodId = (!branchNum.isEmpty() && !accNum.isEmpty()) ? branchNum + accNum : "";
-        log("Constructed PROD_ID: " + prodId);
-
-        Response response = callApi(prodId, "tavonh", "Raa@1126");
-
-        int actualCode = response.code();
-        log("Actual Response Code: " + actualCode);
-
-        Assert.assertEquals(String.valueOf(actualCode), expResponseCode,
-                "Response code mismatch for " + testId);
-
-        String responseBody = response.body() != null ? response.body().string() : "";
-        log("Response Body: " + responseBody);
-
-        Assert.assertTrue(responseBody.contains(expStatus),
-                "Expected status not found in response!");
-
-        log("✅ Test Passed for: " + testId);
+    // -------------------------- LOG HELPERS --------------------------
+    private void logBoth(String msg) {
+        System.out.println("[PY22Test] " + msg);
+        test.info(msg);
     }
 
-    // ---------------------- Logger ----------------------
-    private void log(String msg) {
-        System.out.println("[PY22TEST] " + msg);
+    private void logPass(String msg) {
+        System.out.println("✅ " + msg);
+        test.pass(msg);
+    }
+
+    private void logFail(String msg) {
+        System.err.println("❌ " + msg);
+        test.fail(msg);
     }
 }
