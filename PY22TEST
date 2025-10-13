@@ -5,10 +5,8 @@ import com.aventstack.extentreports.reporter.ExtentSparkReporter;
 import io.restassured.response.Response;
 import org.framework.config.ConfigManager;
 import org.framework.utils.*;
-import org.json.JSONObject;
-import org.testng.Assert;
-import org.testng.Reporter;
 import org.testng.annotations.*;
+
 import java.lang.reflect.Method;
 import java.util.*;
 import static io.restassured.RestAssured.given;
@@ -17,24 +15,18 @@ public class PY22Test {
 
     private static ExtentReports extent;
     private ExtentTest test;
+    private TestLogger logger;
 
     private static final String EXCEL_PATH = ConfigManager.get("excel.path");
     private static final String SHEET_NAME = "PY22";
     private static final String PLM_QUERY = ConfigManager.get("PLMQuery");
+    private static final String PY22_URL = ConfigManager.get("py22.url");
 
-    @DataProvider(name = "py22Data")
-    public Object[][] py22Data() throws Exception {
-        List<Map<String, String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
-        Object[][] out = new Object[rows.size()][1];
-        for (int i = 0; i < rows.size(); i++) out[i][0] = rows.get(i);
-        return out;
-    }
-
+    // ==================== REPORT SETUP ====================
     @BeforeSuite
     public void beforeSuite() {
-        ExtentSparkReporter spark = new ExtentSparkReporter("ExtentReport.html");
         extent = new ExtentReports();
-        extent.attachReporter(spark);
+        extent.attachReporter(new ExtentSparkReporter("ExtentReport_PY22.html"));
     }
 
     @AfterSuite
@@ -45,139 +37,126 @@ public class PY22Test {
     @BeforeMethod
     public void beforeMethod(Method method) {
         test = extent.createTest(method.getName());
+        logger = new TestLogger(test);
     }
 
-    // ================= MAIN TEST =====================
-    @Test(dataProvider = "py22Data")
-    public void callpy22Api(Map<String, String> row) throws Exception {
+    // ==================== DATA PROVIDER ====================
+    @DataProvider(name = "py22Data")
+    public Object[][] py22Data() throws Exception {
+        List<Map<String, String>> rows = ExcelUtils.readSheet(EXCEL_PATH, SHEET_NAME);
+        Object[][] data = new Object[rows.size()][1];
+        for (int i = 0; i < rows.size(); i++) {
+            data[i][0] = rows.get(i);
+        }
+        return data;
+    }
 
+    // ==================== TEST ====================
+    @Test(dataProvider = "py22Data")
+    public void PY22_Test(Map<String, String> row) throws Exception {
+        String testId        = row.get("TestCaseID");
+        String branch        = row.get("Branch");
+        String account       = row.get("Account");
+        String expectedStatus= row.get("ExpectedStatus");
+        String expectedFields= row.get("ExpectedFieldsJson");
+        boolean fetchDb      = Boolean.parseBoolean(row.getOrDefault("FetchDb", "false"));
+
+        runTest(testId, branch, account, expectedStatus, expectedFields, fetchDb);
+    }
+
+    // ==================== CORE TEST EXECUTION ====================
+    private void runTest(String testId, String branch, String account,
+                         String expectedStatus, String expectedFields, boolean fetchDb) throws Exception {
         long startTime = System.currentTimeMillis();
 
-        String testid = row.getOrDefault("TestCaseID", "").trim();
-        String branchNumber = row.getOrDefault("BranchNumber", "").trim();
-        String accountNumber = row.getOrDefault("AccountNumber", "").trim();
-        String expectedFieldsJson = row.getOrDefault("ExpectedFields", "").trim();
-        String responseCode = row.getOrDefault("ResponseCode", "").trim();
-        String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
+        try {
+            logger.section(testId);
 
-        String prodid = (!branchNumber.isEmpty() && !accountNumber.isEmpty()) ?
-                branchNumber + accountNumber : "";
-        logBoth("Constructed PROD_ID: " + prodid);
-        logBoth("=== Running PY22 test: " + testid + " (PROD_ID='" + prodid + "') ===");
+            String prodId = (branch.isEmpty() || account.isEmpty()) ? "" : branch + account;
+            logger.info("PROD_ID: " + (prodId.isEmpty() ? "[EMPTY]" : prodId));
 
-        // ------------------ API CALL ------------------
-        Response response = callApi(prodid);
-        int status = response.getStatusCode();
-        String body = response.getBody().asString();
+            // API Call
+            Response response = callPY22Api(prodId);
+            logger.info("Status: " + response.getStatusCode() + " | Time: " + response.getTime() + "ms");
 
-        logBoth("HTTP Status: " + status);
-        logBoth("Response Body (truncated): " + (body.length() > 600 ? body.substring(0, 600) + "..." : body));
+            // Validations
+            boolean statusOk = ApiValidator.validateStatus(response, expectedStatus, logger);
 
-        // ------------------ STATUS VALIDATION ------------------
-        if (!expStatusStr.isBlank()) {
-            int expStatus = Integer.parseInt(expStatusStr);
-            Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testid);
-            logBoth("Expected HTTP status matched: " + expStatus);
-        }
-
-        // ------------------ DB VALIDATION ------------------
-        if (!PLM_QUERY.isBlank()) {
-            try {
-                List<Map<String, String>> dbData = DBUtils.fetchRata(PLM_QUERY, prodid);
-                if (dbData != null && !dbData.isEmpty()) {
-                    List<String> columns = new ArrayList<>(dbData.get(0).keySet());
-                    DBUtils.logDbDataInTable(dbData, columns, this::logBoth);
-                    logBoth("Fetched DB rows count: " + dbData.size());
-                } else {
-                    logBoth("⚠️ No DB records found for PROD_ID: " + prodid);
-                }
-            } catch (Exception e) {
-                logFail("DB validation skipped due to error: " + e.getMessage());
-            }
-        }
-
-        // ------------------ EXPECTED FIELD VALIDATION ------------------
-        if (!expectedFieldsJson.isEmpty()) {
-            JSONObject expJson = new JSONObject(expectedFieldsJson);
-            Map<String, String> expectedFields = new HashMap<>();
-            for (String k : expJson.keySet()) expectedFields.put(k, expJson.get(k).toString());
-
-            Map<String, Object> apiMap = JsonUtils.flattenJson(new JSONObject(body));
-            boolean pass = true;
-            String failReason = "";
-
-            for (Map.Entry<String, String> exp : expectedFields.entrySet()) {
-                String key = exp.getKey();
-                String expectedVal = exp.getValue();
-                Object actualVal = apiMap.getOrDefault(key, "");
-
-                if (!Objects.equals(String.valueOf(actualVal).trim(), expectedVal.trim())) {
-                    pass = false;
-                    failReason = "Mismatch for field: " + key + " | Expected: " + expectedVal + " | Actual: " + actualVal;
-                    logFail(failReason);
-                } else {
-                    logBoth("Field validation passed -> " + key + " | Expected: " + expectedVal + " | Actual: " + actualVal);
-                }
+            if (fetchDb) {
+                fetchDbData(prodId);
+            } else {
+                logger.info("⊘ DB fetch skipped");
             }
 
-            if (!pass) Assert.fail("Field validation failed: " + failReason);
-            else logBoth("✅ All expected fields validated successfully.");
+            boolean fieldsOk = ApiValidator.validateFields(response, expectedFields, logger);
+
+            // Result
+            long duration = (System.currentTimeMillis() - startTime) / 1000;
+            if (statusOk && fieldsOk) {
+                logger.pass("✓ TEST PASSED in " + duration + "s");
+                ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testId, "PASS", duration);
+            } else {
+                logger.fail("✗ TEST FAILED in " + duration + "s");
+                ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testId, "FAIL", duration);
+                throw new AssertionError("Validation failed");
+            }
+
+        } catch (Exception e) {
+            logger.fail("✗ Error: " + e.getMessage());
+            throw e;
         }
-
-        // ------------------ DURATION LOGGING ------------------
-        long durationSec = (System.currentTimeMillis() - startTime) / 1000;
-        logPass("Test passed for " + testid + " in " + durationSec + " sec");
-
-        ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME,
-                testid, "PASS", durationSec);
-
-        logBoth("=== End of Test: " + testid + " (Duration: " + durationSec + " sec) ===\n");
     }
 
-    // ================= API CALL FUNCTION =====================
-    private Response callApi(String prodid) {
-        logBoth("Step: Preparing headers for PY22 API call");
-
-        String basicAuth = "Basic " + Base64.getEncoder().encodeToString("tavonh:Raa@1126".getBytes());
-        String url = ConfigManager.get("py22.url");
-
+    // ==================== API CALL ====================
+    private Response callPY22Api(String prodId) {
         return given()
-                .header("Authorization", basicAuth)
-                .header("Content-Type", "application/json")
-                .header("X-HSBC-Locale", "en_GB")
-                .header("X-HSBC-Chnl-CountryCode", "GB")
-                .header("X-HSBC-Chnl-Group-Member", "HBEU")
-                .header("X-HSBC-User-Id", "C12345678")
-                .header("X-HSBC-CAM-Level", "40")
-                .header("X-HSBC-Channel-Id", "OHB")
-                .header("X-HSBC-Src-Device-Id", "1234")
-                .header("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)")
-                .header("X-HSBC-Request-Correlation-Id", "shubham")
-                .header("X-HSBC-Consumer-Id", "GBHBEU_CMB.MOBILE_I")
-                .header("X-HSBC-IP-Id", "136.46.24.54")
-                .header("X-HSBC-Bene-Type", "RSP9")
-                .header("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2")
-                .header("X-HSBC-Client-Secret", "68Cf51e5D5514180bf211DA13396AD1C")
-                .when()
-                .get(url)
+                .headers(getPY22Headers())
+                .get(PY22_URL + (prodId.isEmpty() ? "" : "?prodId=" + prodId))
                 .then()
                 .extract()
                 .response();
     }
 
-    // ================= LOGGING HELPERS =====================
-    private void logBoth(String msg) {
-        test.log(Status.INFO, msg);
-        Reporter.log(msg, true);
+    private Map<String, String> getPY22Headers() {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Authorization", "Basic " +
+                Base64.getEncoder().encodeToString("tavonh:Raa@1126".getBytes()));
+        headers.put("Content-Type", "application/json");
+        headers.put("X-HSBC-Locale", "en_GB");
+        headers.put("X-HSBC-Chnl-CountryCode", "GB");
+        headers.put("X-HSBC-Chnl-Group-Member", "HBEU");
+        headers.put("X-HSBC-User-Id", "C12345678");
+        headers.put("X-HSBC-CAM-Level", "40");
+        headers.put("X-HSBC-Channel-Id", "OHB");
+        headers.put("X-HSBC-Src-Device-Id", "1234");
+        headers.put("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)");
+        headers.put("X-HSBC-Request-Correlation-Id", "shubham");
+        headers.put("X-HSBC-Consumer-Id", "GBHBEU_CMB.MOBILE_I");
+        headers.put("X-HSBC-IP-Id", "136.46.24.54");
+        headers.put("X-HSBC-Bene-Type", "RSP9");
+        headers.put("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2");
+        headers.put("X-HSBC-Client-Secret", "68Cf51e5D5514180bf211DA13396AD1C");
+        return headers;
     }
 
-    private void logPass(String msg) {
-        test.log(Status.PASS, msg);
-        Reporter.log("[PASS] " + msg, true);
-    }
+    // ==================== DB FETCH ====================
+    private void fetchDbData(String prodId) {
+        if (PLM_QUERY == null || PLM_QUERY.isBlank()) {
+            logger.warn("⊘ DB query not configured");
+            return;
+        }
 
-    private void logFail(String msg) {
-        test.log(Status.FAIL, msg);
-        Reporter.log("[FAIL] " + msg, true);
+        try {
+            List<Map<String, String>> dbData = DBUtils.fetchRata(PLM_QUERY, prodId);
+            if (dbData != null && !dbData.isEmpty()) {
+                logger.pass("✓ DB rows: " + dbData.size());
+                List<String> columns = new ArrayList<>(dbData.get(0).keySet());
+                DBUtils.logDbDataInTable(dbData, columns, logger::info);
+            } else {
+                logger.warn("⚠ No DB records for PROD_ID: " + prodId);
+            }
+        } catch (Exception e) {
+            logger.fail("DB error: " + e.getMessage());
+        }
     }
 }
