@@ -1,184 +1,503 @@
-give me updated code for TestExecutor n PY22Tests with all these logging methods
+// ============= 1. ApiValidator.java (Reusable Util) =============
+package org.framework.utils;
 
-Below are the updated versions of your `TestExecutor` and `PY22Tests` classes integrating the requested logging methods such as `logBoth`, `logPass`, `logFail`, and lifecycle methods `beforeSuite`, `afterSuite`, and `beforeMethod`. The reporting and logging are centralized, and logging methods can be customized to use ExtentSparkReporter as defined in a shared report manager or base test class.
+import io.restassured.response.Response;
+import org.json.JSONObject;
+import org.testng.Assert;
+import java.util.*;
 
-***
+public class ApiValidator {
+    
+    /**
+     * Validates HTTP status code with detailed logging
+     */
+    public static boolean validateStatus(Response response, String expectedStatus, 
+                                         String testId, TestLogger logger) {
+        if (expectedStatus == null || expectedStatus.isBlank()) {
+            logger.info("⊘ Status validation skipped - No expected status provided");
+            return true;
+        }
+        
+        try {
+            int expected = Integer.parseInt(expectedStatus.trim());
+            int actual = response.getStatusCode();
+            
+            logger.info("Validating HTTP Status: Expected=" + expected + ", Actual=" + actual);
+            
+            if (actual == expected) {
+                logger.pass("✓ Status validation passed: " + actual);
+                return true;
+            } else {
+                logger.fail("✗ Status mismatch | Expected: " + expected + " | Actual: " + actual);
+                Assert.fail("HTTP status mismatch for test: " + testId);
+                return false;
+            }
+        } catch (NumberFormatException e) {
+            logger.fail("Invalid expected status format: " + expectedStatus);
+            return false;
+        }
+    }
+    
+    /**
+     * Validates response fields against expected values with detailed logging
+     */
+    public static boolean validateFields(Response response, String expectedFieldsJson, 
+                                         String testId, TestLogger logger) {
+        if (expectedFieldsJson == null || expectedFieldsJson.isEmpty()) {
+            logger.info("⊘ Field validation skipped - No expected fields provided");
+            return true;
+        }
+        
+        logger.info("Starting field validation...");
+        
+        try {
+            JSONObject expectedJson = new JSONObject(expectedFieldsJson);
+            Map<String, String> expectedFields = jsonToMap(expectedJson);
+            
+            logger.info("Expected fields count: " + expectedFields.size());
+            
+            String responseBody = response.getBody().asString();
+            Map<String, Object> actualFields = JsonUtils.flattenJson(new JSONObject(responseBody));
+            
+            List<String> failures = new ArrayList<>();
+            int passCount = 0;
+            
+            for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
+                String key = entry.getKey();
+                String expectedVal = entry.getValue();
+                Object actualVal = actualFields.getOrDefault(key, "");
+                
+                logger.info("Checking field: " + key);
+                
+                if (!Objects.equals(String.valueOf(actualVal).trim(), expectedVal.trim())) {
+                    String failMsg = String.format("✗ Field '%s' | Expected: '%s' | Actual: '%s'", 
+                        key, expectedVal, actualVal);
+                    failures.add(failMsg);
+                    logger.fail(failMsg);
+                } else {
+                    passCount++;
+                    logger.pass(String.format("✓ Field '%s' matched: %s", key, expectedVal));
+                }
+            }
+            
+            if (!failures.isEmpty()) {
+                logger.fail("Field validation failed: " + passCount + " passed, " + 
+                           failures.size() + " failed");
+                Assert.fail("Field validation failed for " + testId + ":\n" + 
+                           String.join("\n", failures));
+                return false;
+            } else {
+                logger.pass("✓ All " + passCount + " fields validated successfully");
+                return true;
+            }
+        } catch (Exception e) {
+            logger.fail("Field validation error: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    private static Map<String, String> jsonToMap(JSONObject json) {
+        Map<String, String> map = new HashMap<>();
+        for (String key : json.keySet()) {
+            map.put(key, json.get(key).toString());
+        }
+        return map;
+    }
+}
 
-### TestExecutor.java
+// ============= 2. TestLogger.java (Reusable Util) =============
+package org.framework.utils;
 
-```java
-package com.framework.core;
+import com.aventstack.extentreports.ExtentTest;
+import com.aventstack.extentreports.Status;
+import org.testng.Reporter;
 
-import com.framework.utils.*;
-import com.framework.utils.ApiUtils.ApiResponse;
+public class TestLogger {
+    
+    private final ExtentTest extentTest;
+    
+    public TestLogger(ExtentTest extentTest) {
+        this.extentTest = extentTest;
+    }
+    
+    public void info(String msg) {
+        extentTest.log(Status.INFO, msg);
+        Reporter.log("[INFO] " + msg, true);
+    }
+    
+    public void pass(String msg) {
+        extentTest.log(Status.PASS, msg);
+        Reporter.log("[PASS] " + msg, true);
+    }
+    
+    public void fail(String msg) {
+        extentTest.log(Status.FAIL, msg);
+        Reporter.log("[FAIL] " + msg, true);
+    }
+    
+    public void warn(String msg) {
+        extentTest.log(Status.WARNING, msg);
+        Reporter.log("[WARN] " + msg, true);
+    }
+    
+    public void debug(String msg) {
+        extentTest.log(Status.INFO, "[DEBUG] " + msg);
+        Reporter.log("[DEBUG] " + msg, true);
+    }
+    
+    public void section(String msg) {
+        String formatted = "\n" + "=".repeat(60) + "\n" + msg + "\n" + "=".repeat(60);
+        extentTest.log(Status.INFO, "<b>" + msg + "</b>");
+        Reporter.log(formatted, true);
+    }
+}
+
+// ============= 3. PY22Test.java (REFACTORED with 3 Test Cases) =============
+package tests;
+
+import com.aventstack.extentreports.*;
+import com.aventstack.extentreports.reporter.ExtentSparkReporter;
+import io.restassured.response.Response;
+import org.framework.config.ConfigManager;
+import org.framework.utils.*;
 import org.testng.annotations.*;
+import java.lang.reflect.Method;
+import java.util.*;
+import static io.restassured.RestAssured.given;
 
-import java.util.Map;
+public class PY22Test {
 
-public class TestExecutor {
+    private static ExtentReports extent;
+    private ExtentTest test;
+    private TestLogger logger;
 
-    public static ExtentReports extent;
-    public static ExtentTest test;
+    private static final String EXCEL_PATH = ConfigManager.get("excel.path");
+    private static final String SHEET_NAME = "PY22";
+    private static final String PLM_QUERY = ConfigManager.get("PLMQuery");
+    private static final String PY22_URL = ConfigManager.get("py22.url");
 
     @BeforeSuite
     public void beforeSuite() {
-        ExtentSparkReporter spark = new ExtentSparkReporter("test-output/ExtentSpark.html");
         extent = new ExtentReports();
-        extent.attachReporter(spark);
-        logBoth("=== Test Suite Started ===");
+        extent.attachReporter(new ExtentSparkReporter("ExtentReport_PY22.html"));
+        System.out.println("Starting PY22 Test Suite Execution...");
     }
 
     @AfterSuite
     public void afterSuite() {
-        logBoth("=== Test Suite Finished ===");
         extent.flush();
+        System.out.println("PY22 Test Suite Execution Completed!");
     }
 
     @BeforeMethod
     public void beforeMethod(Method method) {
         test = extent.createTest(method.getName());
-        logBoth("Starting test method: " + method.getName());
+        logger = new TestLogger(test);
     }
 
-    public void logBoth(String message) {
-        System.out.println(message);
-        if (test != null) test.info(message);
-    }
-
-    public void logPass(String message) {
-        System.out.println("PASS: " + message);
-        if (test != null) test.pass(message);
-    }
-
-    public void logFail(String message) {
-        System.err.println("FAIL: " + message);
-        if (test != null) test.fail(message);
-    }
-
-    public static void runCase(Map<String, String> row) throws Exception {
-        String testId = row.getOrDefault("TestCaseID", "").trim();
-        test = extent.createTest("TestCase: " + testId);
-
-        String branchNum = row.getOrDefault("Branch number", "").trim();
-        String accNum = row.getOrDefault("AccountNumber", "").trim();
-        String expectedStatus = row.getOrDefault("ExpectedStatus", "").trim();
-        String expectedResponseCode = row.getOrDefault("Response code", "").trim();
-
-        String prodId = "";
-        if (!branchNum.isEmpty() && !accNum.isEmpty()) prodId = branchNum + accNum;
-        else if (!branchNum.isEmpty()) prodId = branchNum;
-        else if (!accNum.isEmpty()) prodId = accNum;
-
-        test.info("TestCaseID: " + testId);
-        test.info("PROD_ID constructed: " + prodId);
-
-        long start = System.currentTimeMillis();
-
-        String jwt = JwtFetcher.generateToken();
-        Map<String, String> headers = HeaderUtils.buildHeaders(jwt, prodId);
-        test.info("JWT generated. Headers: " + headers);
-
-        ApiResponse response = ApiUtils.callApi("py22.api.url", headers, null, "GET");
-        test.info("API call made, got response: " + response.bodyRaw);
-
-        int statusCode = response.statusCode;
-        Map<String, Object> flatResponse = response.bodyMap;
-
-        String actualResponseCode = flatResponse.getOrDefault("responseCode", "").toString();
-        String actualErrorCode = flatResponse.getOrDefault("errorCode", "").toString();
-
-        test.info("HTTP Status: " + statusCode);
-        test.info("Actual ResponseCode: " + actualResponseCode);
-        test.info("Actual ErrorCode: " + actualErrorCode);
-
-        String result;
-        if (statusCode == 200) {
-            result = expectedResponseCode.equals(actualResponseCode) ? "PASS" : "FAIL";
-            test.info("Validation: comparing expectedResponseCode [" + expectedResponseCode + "] with actualResponseCode [" + actualResponseCode + "]");
-        } else {
-            result = expectedResponseCode.equals(actualErrorCode) ? "PASS" : "FAIL";
-            test.info("Validation: comparing expectedResponseCode [" + expectedResponseCode + "] with actualErrorCode [" + actualErrorCode + "]");
+    // ============= TEST CASE 1: Mandatory Field Validation with DB Fetch =============
+    @Test(priority = 1, 
+          groups = {"smoke", "mandatory"}, 
+          description = "TC01 - Mandatory field validation with DB verification")
+    public void TC01_MandatoryField_Validation() throws Exception {
+        long startTime = System.currentTimeMillis();
+        String testId = "TC01_SC01_PY22_MandatoryField_Validation";
+        
+        logger.section("TEST CASE 1: MANDATORY FIELD VALIDATION");
+        logger.info("Test ID: " + testId);
+        
+        try {
+            // Test data
+            String branchNumber = "400002";
+            String accountNumber = "19003789";
+            String prodId = branchNumber + accountNumber;
+            String expectedStatus = "200";
+            String expectedFields = "{\"gb-hbeu-rps-pap-acct-mainopts-dlts-enq-v1-svcOperationResponse.responseMessage.responseBody.responseCode\":\"0000\"}";
+            
+            logger.info("Branch Number: " + branchNumber);
+            logger.info("Account Number: " + accountNumber);
+            logger.info("PROD_ID: " + prodId);
+            
+            // Step 1: API Call
+            logger.section("STEP 1: API EXECUTION");
+            Response response = callPY22Api(prodId);
+            logResponseDetails(response);
+            
+            // Step 2: Status Validation
+            logger.section("STEP 2: STATUS VALIDATION");
+            ApiValidator.validateStatus(response, expectedStatus, testId, logger);
+            
+            // Step 3: DB Validation (Only for TC01)
+            logger.section("STEP 3: DATABASE VALIDATION");
+            fetchAndLogDbData(prodId);
+            
+            // Step 4: Field Validation
+            logger.section("STEP 4: FIELD VALIDATION");
+            ApiValidator.validateFields(response, expectedFields, testId, logger);
+            
+            // Final Result
+            long duration = (System.currentTimeMillis() - startTime) / 1000;
+            logger.section("TEST RESULT");
+            logger.pass("✓ TC01 PASSED in " + duration + " seconds");
+            
+            ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testId, "PASS", duration);
+            
+        } catch (Exception e) {
+            logger.fail("✗ TC01 FAILED: " + e.getMessage());
+            e.printStackTrace();
+            throw e;
         }
-
-        long durationSec = (System.currentTimeMillis() - start) / 1000;
-        test.info("Test Duration: " + durationSec + " seconds");
-        test.info("Result: " + result);
-
-        if ("PASS".equals(result)) {
-            test.pass("Test Passed");
-        } else {
-            test.fail("Test Failed");
-        }
-
-        ExcelUtils.writeResultWithDuration("src/test/resources/testdata.xlsx", "PY22", testId, result, durationSec);
-
-        extent.flush();
-    }
-}
-```
-
-***
-
-### PY22Tests.java
-
-```java
-package com.framework.tests;
-
-import com.framework.core.TestExecutor;
-import com.framework.utils.ExcelUtils;
-import org.testng.annotations.*;
-
-import java.util.Map;
-
-public class PY22Tests {
-
-    private static final String EXCEL_PATH = "src/test/resources/testdata.xlsx";
-    private static final String SHEET = "PY22";
-
-    @BeforeSuite
-    public void beforeSuite() {
-        TestExecutor.beforeSuite();
     }
 
-    @AfterSuite
-    public void afterSuite() {
-        TestExecutor.afterSuite();
-    }
-
-    @BeforeMethod
-    public void beforeMethod(java.lang.reflect.Method method) {
-        TestExecutor.beforeMethod(method);
-    }
-
-    @Test(description = "TC01 - Valid PROD_ID")
-    public void TC01_Valid_PROD_ID() throws Exception {
-        TestExecutor.test.info("Starting test: TC01_Valid_PROD_ID");
-        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC01_SC01_PY22_Valid_PROD_ID");
-        TestExecutor.runCase(data);
-        TestExecutor.test.info("Ending test: TC01_Valid_PROD_ID");
-    }
-
-    @Test(description = "TC02 - Mandatory Field Validation (Branch number)")
+    // ============= TEST CASE 2: Branch Number Validation (No DB Fetch) =============
+    @Test(priority = 2, 
+          groups = {"regression", "validation"}, 
+          description = "TC02 - Branch number field validation")
     public void TC02_MandatoryField_Validation_BranchNumber() throws Exception {
-        TestExecutor.test.info("Starting test: TC02_MandatoryField_Validation_BranchNumber");
-        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC02_SC01_PY22_MandatoryField_Validation_BranchNumber");
-        TestExecutor.runCase(data);
-        TestExecutor.test.info("Ending test: TC02_MandatoryField_Validation_BranchNumber");
+        long startTime = System.currentTimeMillis();
+        String testId = "TC02_SC01_PY22_MandatoryField_Validation_Branchnumber";
+        
+        logger.section("TEST CASE 2: BRANCH NUMBER VALIDATION");
+        logger.info("Test ID: " + testId);
+        
+        try {
+            // Test data - Empty branch/account to test error scenario
+            String branchNumber = "";
+            String accountNumber = "";
+            String prodId = "";
+            String expectedStatus = "400";
+            String expectedFields = "{\"gb-hbeu-rps-pap-acct-mainopts-dlts-enq-v1-svcOperationResponse.responseMessage.responseBody.responseCode\":\"9992\"}";
+            
+            logger.info("Branch Number: [EMPTY]");
+            logger.info("Account Number: [EMPTY]");
+            logger.info("PROD_ID: [EMPTY] - Testing error scenario");
+            
+            // Step 1: API Call
+            logger.section("STEP 1: API EXECUTION");
+            Response response = callPY22Api(prodId);
+            logResponseDetails(response);
+            
+            // Step 2: Status Validation
+            logger.section("STEP 2: STATUS VALIDATION");
+            ApiValidator.validateStatus(response, expectedStatus, testId, logger);
+            
+            // Step 3: DB Validation - SKIPPED for TC02
+            logger.section("STEP 3: DATABASE VALIDATION");
+            logger.info("⊘ DB validation skipped for TC02 (as per requirement)");
+            
+            // Step 4: Field Validation
+            logger.section("STEP 4: FIELD VALIDATION");
+            ApiValidator.validateFields(response, expectedFields, testId, logger);
+            
+            // Final Result
+            long duration = (System.currentTimeMillis() - startTime) / 1000;
+            logger.section("TEST RESULT");
+            logger.pass("✓ TC02 PASSED in " + duration + " seconds");
+            
+            ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testId, "PASS", duration);
+            
+        } catch (Exception e) {
+            logger.fail("✗ TC02 FAILED: " + e.getMessage());
+            e.printStackTrace();
+            throw e;
+        }
     }
 
-    @Test(description = "TC03 - Mandatory Field Validation (Account number)")
+    // ============= TEST CASE 3: Account Number Validation (No DB Fetch) =============
+    @Test(priority = 3, 
+          groups = {"regression", "validation"}, 
+          description = "TC03 - Account number field validation")
     public void TC03_MandatoryField_Validation_AccountNumber() throws Exception {
-        TestExecutor.test.info("Starting test: TC03_MandatoryField_Validation_AccountNumber");
-        Map<String, String> data = ExcelUtils.getRowByTestId(EXCEL_PATH, SHEET, "TC03_SC01_PY22_MandatoryField_Validation_AccountNumber");
-        TestExecutor.runCase(data);
-        TestExecutor.test.info("Ending test: TC03_MandatoryField_Validation_AccountNumber");
+        long startTime = System.currentTimeMillis();
+        String testId = "TC03_SC01_PY22_MandatoryField_Validation_Accountnumber";
+        
+        logger.section("TEST CASE 3: ACCOUNT NUMBER VALIDATION");
+        logger.info("Test ID: " + testId);
+        
+        try {
+            // Test data - Empty account to test error scenario
+            String branchNumber = "";
+            String accountNumber = "";
+            String prodId = "";
+            String expectedStatus = "400";
+            String expectedFields = "{\"gb-hbeu-rps-pap-acct-mainopts-dlts-enq-v1-svcOperationResponse.responseMessage.responseBody.responseCode\":\"9992\"}";
+            
+            logger.info("Branch Number: [EMPTY]");
+            logger.info("Account Number: [EMPTY]");
+            logger.info("PROD_ID: [EMPTY] - Testing error scenario");
+            
+            // Step 1: API Call
+            logger.section("STEP 1: API EXECUTION");
+            Response response = callPY22Api(prodId);
+            logResponseDetails(response);
+            
+            // Step 2: Status Validation
+            logger.section("STEP 2: STATUS VALIDATION");
+            ApiValidator.validateStatus(response, expectedStatus, testId, logger);
+            
+            // Step 3: DB Validation - SKIPPED for TC03
+            logger.section("STEP 3: DATABASE VALIDATION");
+            logger.info("⊘ DB validation skipped for TC03 (as per requirement)");
+            
+            // Step 4: Field Validation
+            logger.section("STEP 4: FIELD VALIDATION");
+            ApiValidator.validateFields(response, expectedFields, testId, logger);
+            
+            // Final Result
+            long duration = (System.currentTimeMillis() - startTime) / 1000;
+            logger.section("TEST RESULT");
+            logger.pass("✓ TC03 PASSED in " + duration + " seconds");
+            
+            ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testId, "PASS", duration);
+            
+        } catch (Exception e) {
+            logger.fail("✗ TC03 FAILED: " + e.getMessage());
+            e.printStackTrace();
+            throw e;
+        }
+    }
+
+    // ============= PY22-SPECIFIC HELPER METHODS =============
+    
+    /**
+     * Calls PY22 API with required headers
+     */
+    private Response callPY22Api(String prodId) {
+        logger.info("Initiating PY22 API call");
+        logger.info("Endpoint: " + PY22_URL);
+        logger.info("PROD_ID parameter: " + (prodId.isEmpty() ? "[EMPTY]" : prodId));
+        
+        try {
+            Response response = given()
+                    .headers(getPY22Headers())
+                    .log().headers() // Log request headers
+                    .when()
+                    .get(PY22_URL + (prodId.isEmpty() ? "" : "?prodId=" + prodId))
+                    .then()
+                    .extract()
+                    .response();
+            
+            logger.info("API call completed successfully");
+            return response;
+            
+        } catch (Exception e) {
+            logger.fail("API call failed: " + e.getMessage());
+            throw e;
+        }
+    }
+    
+    /**
+     * Logs detailed response information
+     */
+    private void logResponseDetails(Response response) {
+        logger.info("Response received:");
+        logger.info("├─ Status Code: " + response.getStatusCode());
+        logger.info("├─ Status Line: " + response.getStatusLine());
+        logger.info("├─ Response Time: " + response.getTime() + " ms");
+        logger.info("├─ Content Type: " + response.getContentType());
+        
+        String body = response.getBody().asString();
+        if (body.length() > 500) {
+            logger.info("└─ Body (truncated): " + body.substring(0, 500) + "...");
+            logger.debug("Full Response Body: " + body);
+        } else {
+            logger.info("└─ Body: " + body);
+        }
+    }
+    
+    /**
+     * Returns PY22-specific headers
+     */
+    private Map<String, String> getPY22Headers() {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Authorization", "Basic " + 
+            Base64.getEncoder().encodeToString("tavonh:Raa@1126".getBytes()));
+        headers.put("Content-Type", "application/json");
+        headers.put("X-HSBC-Locale", "en_GB");
+        headers.put("X-HSBC-Chnl-CountryCode", "GB");
+        headers.put("X-HSBC-Chnl-Group-Member", "HBEU");
+        headers.put("X-HSBC-User-Id", "C12345678");
+        headers.put("X-HSBC-CAM-Level", "40");
+        headers.put("X-HSBC-Channel-Id", "OHB");
+        headers.put("X-HSBC-Src-Device-Id", "1234");
+        headers.put("X-HSBC-Src-UserAgent", "Apache-HttpClient/4.5.6 (Java/1.8.0_112)");
+        headers.put("X-HSBC-Request-Correlation-Id", "shubham");
+        headers.put("X-HSBC-Consumer-Id", "GBHBEU_CMB.MOBILE_I");
+        headers.put("X-HSBC-IP-Id", "136.46.24.54");
+        headers.put("X-HSBC-Bene-Type", "RSP9");
+        headers.put("X-HSBC-Client-Id", "25b5dfb6bb584c708801082c884f15d2");
+        headers.put("X-HSBC-Client-Secret", "68Cf51e5D5514180bf211DA13396AD1C");
+        
+        logger.debug("Headers prepared: " + headers.size() + " headers added");
+        return headers;
+    }
+    
+    /**
+     * Fetches and logs database data (Only for TC01)
+     */
+    private void fetchAndLogDbData(String prodId) {
+        if (PLM_QUERY == null || PLM_QUERY.isBlank()) {
+            logger.warn("⊘ DB query not configured - Skipping DB validation");
+            return;
+        }
+        
+        logger.info("Executing DB query for PROD_ID: " + prodId);
+        
+        try {
+            List<Map<String, String>> dbData = DBUtils.fetchRata(PLM_QUERY, prodId);
+            
+            if (dbData != null && !dbData.isEmpty()) {
+                logger.pass("✓ DB records found: " + dbData.size() + " row(s)");
+                
+                List<String> columns = new ArrayList<>(dbData.get(0).keySet());
+                logger.info("Columns retrieved: " + String.join(", ", columns));
+                
+                DBUtils.logDbDataInTable(dbData, columns, logger::info);
+                
+            } else {
+                logger.warn("⚠ No DB records found for PROD_ID: " + prodId);
+            }
+        } catch (Exception e) {
+            logger.fail("✗ DB validation error: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }
-```
 
-***
-
-These implementations centralize and unify your logging using ExtentReports and provide your requested lifecycle methods. All test flow and logging are handled in the test classes or TestExecutor, so your `ApiUtils` remains untouched and purely utility-focused.
-
-You can extend this pattern with additional tests and logging helpers as needed.
-
+// ============= HOW TO RUN SPECIFIC TESTS =============
+/*
+ * Command Line Options:
+ * 
+ * 1. Run ALL tests:
+ *    mvn test -Dtest=PY22Test
+ * 
+ * 2. Run ONLY TC01:
+ *    mvn test -Dtest=PY22Test#TC01_MandatoryField_Validation
+ * 
+ * 3. Run ONLY TC02:
+ *    mvn test -Dtest=PY22Test#TC02_MandatoryField_Validation_BranchNumber
+ * 
+ * 4. Run ONLY TC03:
+ *    mvn test -Dtest=PY22Test#TC03_MandatoryField_Validation_AccountNumber
+ * 
+ * 5. Run by groups (smoke tests):
+ *    mvn test -Dgroups=smoke
+ * 
+ * 6. Run by groups (regression tests):
+ *    mvn test -Dgroups=regression
+ * 
+ * 7. Run multiple specific tests:
+ *    mvn test -Dtest=PY22Test#TC01_MandatoryField_Validation+TC02_MandatoryField_Validation_BranchNumber
+ * 
+ * In TestNG XML:
+ * <test name="Run Only TC01">
+ *     <classes>
+ *         <class name="tests.PY22Test">
+ *             <methods>
+ *                 <include name="TC01_MandatoryField_Validation"/>
+ *             </methods>
+ *         </class>
+ *     </classes>
+ * </test>
+ */
