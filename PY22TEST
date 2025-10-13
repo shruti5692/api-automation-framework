@@ -7,6 +7,7 @@ import io.restassured.response.Response;
 import org.framework.config.ConfigManager;
 import org.framework.utils.ExcelUtils;
 import org.framework.utils.JsonUtils;
+import org.framework.utils.DBUtils;
 import org.json.JSONObject;
 import org.testng.Assert;
 import org.testng.Reporter;
@@ -59,92 +60,44 @@ public class PY22Test {
         String expStatusStr = row.getOrDefault("ExpectedStatus", "").trim();
 
         String prodid = (!branchNumber.isEmpty() && !accountNumber.isEmpty()) ?
-                branchNumber + accountNumber : "";
+                branchNumber + accountNumber : " ";
 
-        logBoth("=== Running PY22 test: " + testid + " (PROD_ID='" + prodid + "') ===");
-        logBoth("Constructed PROD_ID: " + prodid);
+        logStep("=== Running PY22 Test: " + testid + " | PROD_ID: " + prodid + " ===");
 
-        // Call API
+        // Step 1: API Call
+        logStep("Calling API...");
         Response response = callApi(prodid);
-
-        // Extract response details
         int status = response.statusCode();
         String body = response.asString();
 
         logBoth("HTTP Status: " + status);
-        logBoth("Response Body (truncated): " + (body.length() > 500 ? body.substring(0, 500) + "..." : body));
+        logBoth("Response Body (truncated): " + (body.length() > 800 ? body.substring(0, 800) + "..." : body));
 
-        // Validate status
-        if (!expStatusStr.isBlank()) {
-            int expStatus = Integer.parseInt(expStatusStr);
-            Assert.assertEquals(status, expStatus, "Unexpected HTTP status for test " + testid);
-            logBoth("Expected HTTP status matched: " + expStatus);
+        // Step 2: DB Fetch (optional)
+        Map<String, String> dbData = new HashMap<>();
+        if (requiresDB(testid)) {
+            logStep("Fetching DB data for validation...");
+            String dbQuery = ConfigManager.get("PLMQuery").replace(":PROD_ID", prodid);
+            dbData = DBUtils.fetchSingleRow(dbQuery);
+            logBoth("DB Data fetched: " + dbData);
         }
 
-        // Flatten response for field-wise validation
-        List<Map<String, String>> apiData = JsonUtils.jsonToListOfMaps(body);
+        // Step 3: Response validation
+        validateResponse(testid, expStatusStr, status, body, expectedFieldsJson, dbData);
 
-        // Prepare expected fields
-        Map<String, String> expectedFields = new HashMap<>();
-        if (!expectedFieldsJson.isBlank()) {
-            JSONObject expJson = new JSONObject(expectedFieldsJson);
-            for (String k : expJson.keySet()) {
-                expectedFields.put(k, expJson.get(k).toString());
-            }
-        }
-
-        // Validate fields
-        boolean pass = true;
-        String failReason = "";
-
-        for (Map<String, String> record : apiData) {
-            for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
-                String key = entry.getKey();
-                String expectedVal = entry.getValue();
-
-                String actualVal = record.entrySet().stream()
-                        .filter(e -> e.getKey().endsWith(key))
-                        .map(Map.Entry::getValue)
-                        .findFirst()
-                        .orElse(null);
-
-                if (actualVal == null || !expectedVal.equals(actualVal)) {
-                    pass = false;
-                    failReason = "Mismatch for field: " + key +
-                            " | Expected: " + expectedVal +
-                            " | Actual: " + actualVal;
-                    logBoth(failReason);
-                } else {
-                    logBoth("Field validation passed → " + key +
-                            " | Expected: " + expectedVal +
-                            " | Actual: " + actualVal);
-                }
-            }
-        }
-
-        if (!pass) {
-            Assert.fail("Field validation failed: " + failReason);
-        } else {
-            logBoth("All expected fields validated successfully.");
-        }
-
+        // Step 4: Write results & logs
         long durationSec = (System.currentTimeMillis() - startTime) / 1000;
-        ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testid,
-                pass ? "PASS" : "FAIL: " + failReason, durationSec);
+        ExcelUtils.writeResultWithDuration(EXCEL_PATH, SHEET_NAME, testid, "PASS", durationSec);
 
-        if (pass) {
-            logPass("Test passed for " + testid + " in " + durationSec + " sec");
-        } else {
-            logFail("Field validation failed for " + testid + " | Reason: " + failReason);
-        }
-
+        logPass("Test passed for " + testid + " in " + durationSec + " sec");
         logBoth("=== End of Test: " + testid + " (Duration: " + durationSec + " sec) ===\n");
     }
 
-    private Response callApi(String prodid) {
-        logBoth("Step: Preparing headers and calling PY22 API...");
+    // ==================== Helper Methods ====================
 
+    private Response callApi(String prodid) {
         String url = ConfigManager.get("py22.url");
+        logBoth("Step: Preparing headers & basic auth...");
 
         Response response = RestAssured
                 .given()
@@ -170,18 +123,86 @@ public class PY22Test {
                 .header("X-HSBC-Operator-Service-Unit-Id", "400521")
                 .header("X-HSBC-Operator-Institution-Id", "Z")
                 .header("accept-language", "en")
-                .log().all()
+                .log().headers()
         .when()
                 .get()
         .then()
-                .log().all()
+                .log().status()
                 .extract().response();
 
-        logBoth("API called successfully → Status: " + response.statusCode());
         return response;
     }
 
-    // Logging helpers
+    private void validateResponse(String testid, String expStatusStr, int actualStatus,
+                                  String responseBody, String expectedFieldsJson,
+                                  Map<String, String> dbData) throws Exception {
+        logStep("Step: Validating API Response...");
+
+        if (!expStatusStr.isBlank()) {
+            int expStatus = Integer.parseInt(expStatusStr);
+            Assert.assertEquals(actualStatus, expStatus, "Unexpected HTTP status for test " + testid);
+            logBoth("Expected HTTP status matched: " + expStatus);
+        }
+
+        List<Map<String, String>> apiData = JsonUtils.jsonToListOfMaps(responseBody);
+        Map<String, String> expectedFields = new HashMap<>();
+
+        if (!expectedFieldsJson.isBlank()) {
+            JSONObject expJson = new JSONObject(expectedFieldsJson);
+            for (String k : expJson.keySet()) {
+                expectedFields.put(k, expJson.get(k).toString());
+            }
+        }
+
+        if (dbData != null && !dbData.isEmpty()) {
+            expectedFields.putAll(dbData);
+        }
+
+        boolean pass = true;
+        String failReason = "";
+
+        for (Map<String, String> record : apiData) {
+            for (Map.Entry<String, String> entry : expectedFields.entrySet()) {
+                String key = entry.getKey();
+                String expectedVal = entry.getValue();
+                String actualVal = record.entrySet().stream()
+                        .filter(e -> e.getKey().endsWith(key))
+                        .map(Map.Entry::getValue)
+                        .findFirst()
+                        .orElse("");
+
+                if (!expectedVal.equals(actualVal)) {
+                    pass = false;
+                    failReason = "Mismatch for field: " + key +
+                            " | Expected: " + expectedVal +
+                            " | Actual: " + actualVal;
+                    logFail(failReason);
+                } else {
+                    logBoth("✅ Field validation passed → " + key +
+                            " | Value: " + actualVal);
+                }
+            }
+        }
+
+        if (!pass) {
+            Assert.fail("Field validation failed: " + failReason);
+        } else {
+            logPass("All expected fields validated successfully.");
+        }
+    }
+
+    private boolean requiresDB(String testid) {
+        return testid.equalsIgnoreCase("TC04_ClosedChargeID") ||
+               testid.equalsIgnoreCase("TC05_OpenChargeID");
+    }
+
+    // ==================== Logging Helpers ====================
+
+    private void logStep(String msg) {
+        test.log(Status.INFO, "🟩 " + msg);
+        Reporter.log("[STEP] " + msg, true);
+    }
+
     private void logBoth(String msg) {
         test.log(Status.INFO, msg);
         Reporter.log(msg, true);
