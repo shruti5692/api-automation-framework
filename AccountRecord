@@ -195,3 +195,20 @@ WHERE BR_ACCT_NO IN (
     SELECT DISTINCT BR_ACCT_NO
     FROM qualified_accounts
 );
+
+SELECT
+    r.PROD_ID,
+    r.REFL_DT,
+    r.TRAN_TYP_COD,
+    r.FEE_AMT,
+    acc.PROD_COD,
+    bpi.BUS_PERS_IND,
+    pg.ACTG_ENTY
+FROM RMS_CR_TRAN_DECN r
+JOIN PLM_ACCOUNT acc
+    ON acc.PROD_ID = r.PROD_ID
+JOIN BUD_PROD_ITEM bpi
+    ON bpi.PROD_ITEM_COD = acc.PROD_COD
+JOIN PLM_BR_PROC_GRP pg
+    ON pg.BR_NO = SUBSTR(acc.BR_ACCT_NO, 1, 6)
+WHERE r.REFL_DT = DATE('2026-02-03');
