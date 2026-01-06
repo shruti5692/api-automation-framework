@@ -169,3 +169,29 @@ JOIN PLM_ACCOUNT acc
     ON acc.BR_ACCT_NO = lm.BR_ACCT_NO
 JOIN BUD_PROD_ITEM bpi
     ON bpi.PROD_ITEM_COD = acc.PROD_COD;
+
+
+
+WITH date_groups AS (
+    SELECT
+        BR_ACCT_NO,
+        FNL_RPAY_DT,
+        FNL_RPAY_DT
+          - ROW_NUMBER() OVER (
+                PARTITION BY BR_ACCT_NO
+                ORDER BY FNL_RPAY_DT
+            ) AS grp
+    FROM PLM_LOAN_MATURITY
+),
+qualified_accounts AS (
+    SELECT BR_ACCT_NO
+    FROM date_groups
+    GROUP BY BR_ACCT_NO, grp
+    HAVING COUNT(*) >= 2   -- use >=3 if you want strictly 3 days
+)
+SELECT *
+FROM PLM_LOAN_MATURITY
+WHERE BR_ACCT_NO IN (
+    SELECT DISTINCT BR_ACCT_NO
+    FROM qualified_accounts
+);
