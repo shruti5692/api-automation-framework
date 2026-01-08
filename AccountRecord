@@ -257,3 +257,26 @@ public JSONObject getProjectsbyyear(
     json.put("data", array);
     return json;
 }
+
+
+public List<ProjectDetails> getProjectsFullView(int year) {
+
+    List<String> readList = accessResolver.readAccessList();
+
+    Date startDate = DateUtil.getYearStartDate(year);
+    Date endDate   = DateUtil.getYearEndDate(year);
+
+    // 🔁 Reuse EXISTING year logic
+    List<ProjectDetails> projects =
+            projectDetailsRepository.getProjectbyyear(
+                    readList, startDate, endDate
+            );
+
+    // 🔥 Only teams ending with SVS
+    return projects.stream()
+            .filter(p ->
+                    p.getForTeam() != null &&
+                    p.getForTeam().trim().endsWith("SVS")
+            )
+            .toList();
+}
