@@ -22,3 +22,17 @@ SET
 WHERE for_team = 'COLLECTIONS'
   AND project_name = '2026-C&R LettersChange'
   AND clarity_id = '02022/PRJ71790';
+
+
+
+UPDATE project_details c
+SET
+    status = ca.status,
+    implementation_dates = ca.implementation_dates,
+    start_date = ca.start_date,
+    end_date = ca.end_date
+FROM project_details ca
+WHERE ca.for_team = 'CARDS'
+  AND c.for_team = 'COLLECTIONS'
+  AND c.project_name = ca.project_name
+  AND c.clarity_id = ca.clarity_id;
