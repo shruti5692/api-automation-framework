@@ -11,3 +11,14 @@ public ArrayList<ProjectDetails> getProjectsFullView(Integer year) {
             )
             .collect(Collectors.toCollection(ArrayList::new));
 }
+
+
+UPDATE project_details
+SET
+    status = 'Build',
+    implementation_dates = DATE '2026-01-14',
+    start_date = DATE '2025-12-01',
+    end_date = DATE '2026-02-28'
+WHERE for_team = 'COLLECTIONS'
+  AND project_name = '2026-C&R LettersChange'
+  AND clarity_id = '02022/PRJ71790';
