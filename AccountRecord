@@ -63,3 +63,35 @@ WHERE ca.for_team = 'CARDS'
   "projectCategory": "DISCIPLINE ADDED",
   "identifier": "AUTO"
 }
+
+
+public List<ProjectDetails> getProjectsFullViewByYear(Integer year) {
+    List<String> readList = accessResolver.readAccessList();
+
+    LocalDate start = LocalDate.of(year - 1, 12, 1);
+    LocalDate end   = LocalDate.of(year, 11, 30);
+
+    return projectDetailsRepository.getProjectFullView(
+            readList,
+            Date.valueOf(start),
+            Date.valueOf(end)
+    );
+}
+
+
+@Query(value =
+"SELECT * FROM project_details " +
+"WHERE TRIM(for_team) LIKE '%SVS' " +
+"AND for_team IN ?1 " +
+"AND ( " +
+" (start_date >= ?2 AND start_date <= ?3) OR " +
+" (end_date   >= ?2 AND end_date   <= ?3) OR " +
+" (start_date <  ?2 AND end_date   >  ?3) " +
+") " +
+"ORDER BY for_team, project_name",
+nativeQuery = true)
+List<ProjectDetails> getProjectFullView(
+        List<String> teams,
+        Date startRange,
+        Date endRange
+);
