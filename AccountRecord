@@ -36,3 +36,30 @@ WHERE ca.for_team = 'CARDS'
   AND c.for_team = 'COLLECTIONS'
   AND c.project_name = ca.project_name
   AND c.clarity_id = ca.clarity_id;
+
+
+{
+  "projectName": "2026-C&R LettersChange",
+  "forTeam": "COLLECTIONS",
+  "bpid": "2103485",
+  "clarityId": "02022/PRJ71790",
+  "execYear": 9999,
+  "startDate": "2025-12-01",
+  "endDate": "2026-02-28",
+  "implementationDates": ["2026-01-14"],
+  "projectManager": "Stephen Chan",
+  "developmentManager": "Ekta Bansal",
+  "estimate": 4.5,
+  "type": "Regulatory",
+  "customerGrouping": "Wholesale-CMB",
+  "overallRag": "On Target (Green 1) - G1",
+  "teamRag": "On Target (Green 1) - G1",
+  "status": "Build",
+  "payImpact": "No",
+  "description": "Changes in letter templates",
+  "krestalCheck": "Not Applicable",
+  "fundingStatus": "Approved",
+  "engagementId": "UKCBE-388",
+  "projectCategory": "DISCIPLINE ADDED",
+  "identifier": "AUTO"
+}
