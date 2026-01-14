@@ -134,3 +134,47 @@ public JSONObject getProjectsbyyear(
     json.put("data", array);
     return json;
 }
+
+
+// ProjectDao
+public List<ProjectDetails> getProjectsFullView(Integer year) {
+
+    List<String> readList = accessResolver.readAccessList();
+
+    Integer previousYear = year - 1;
+
+    String startRange = previousYear + "-12-01";
+    String endRange   = year + "-11-30";
+
+    Date startDate = null;
+    Date endDate = null;
+
+    try {
+        startDate = new SimpleDateFormat("yyyy-MM-dd").parse(startRange);
+        endDate   = new SimpleDateFormat("yyyy-MM-dd").parse(endRange);
+    } catch (ParseException e) {
+        e.printStackTrace();
+    }
+
+    return projectDetailsRepository.getProjectsFullView(
+            readList,
+            startDate,
+            endDate
+    );
+}
+
+
+// ProjectDetailsRepository
+@Query(value = """
+    SELECT *
+    FROM project_details
+    WHERE for_team IN (:teams)
+      AND start_date <= :endDate
+      AND end_date   >= :startDate
+    ORDER BY project_name, for_team
+""", nativeQuery = true)
+List<ProjectDetails> getProjectsFullView(
+        @Param("teams") List<String> teams,
+        @Param("startDate") Date startDate,
+        @Param("endDate") Date endDate
+);
