@@ -95,3 +95,42 @@ List<ProjectDetails> getProjectFullView(
         Date startRange,
         Date endRange
 );
+
+
+@RequestMapping(value = "/getProjects", method = RequestMethod.GET)
+public JSONObject getProjectsbyyear(
+        @RequestParam(required = false) Integer year,
+        @RequestParam(required = false) String status,
+        @RequestParam(required = false) String reportType) {
+
+    System.out.println("Inside getProjects CONTROLLER");
+
+    JSONObject json = new JSONObject();
+    JSONArray array = new JSONArray();
+
+    List<ProjectDetails> projectList;
+
+    if ("projectFullView".equals(reportType) && year != null) {
+        System.out.println("INSIDE PROJECT FULL VIEW");
+        projectList = projectDao.getProjectsFullView(year);
+
+    } else if (year != null) {
+        System.out.println("INSIDE YEAR BASED PROJECTS");
+        projectList = projectDao.getProjectsbyyear(year);
+
+    } else if (status != null) {
+        System.out.println("INSIDE STATUS BASED PROJECTS");
+        projectList = projectDao.getProjects(status);
+
+    } else {
+        System.out.println("INSIDE ALL PROJECTS");
+        projectList = projectDao.getProjects();
+    }
+
+    for (ProjectDetails r : projectList) {
+        array.add(r);
+    }
+
+    json.put("data", array);
+    return json;
+}
