@@ -178,3 +178,4 @@ List<ProjectDetails> getProjectsFullView(
         @Param("startDate") Date startDate,
         @Param("endDate") Date endDate
 );
+{REGEX[{B[Details]}][Final repayment date\s([0-9]{1,2}[A-Za-z]{3}[0-9]{4})]}
