@@ -1,181 +1,99 @@
-public ArrayList<ProjectDetails> getProjectsFullView(Integer year) {
-
-    // 🔁 Reuse EXISTING year logic
-    ArrayList<ProjectDetails> projects = getProjectsbyyear(year);
-
-    // 🔥 Apply SVS filter ONLY here
-    return projects.stream()
-            .filter(p ->
-                    p.getForTeam() != null &&
-                    p.getForTeam().trim().endsWith("SVS")
-            )
-            .collect(Collectors.toCollection(ArrayList::new));
+public static WebDriver driver;
+		public static ExtentSparkReporter sparkreport;
+		public static ExtentReports extent;
+		public static ExtentTest test;
+		
+		@BeforeSuite
+		public void setReport() 
+		{
+			String a=BaseClass.date();
+			sparkreport= new ExtentSparkReporter("C:/Users/Parmeshwar/eclipse-workspace/BankProject/reports/htmlreport"+a+".html");
+			extent= new ExtentReports();
+			extent.attachReporter(sparkreport);
+			extent.setSystemInfo("Operating System", "Windows 10");
+			extent.setSystemInfo("Environment", "QA");
+			sparkreport.config().setReportName("Integration Test Execution");
+			sparkreport.config().setDocumentTitle("QA Automation Testing Report");
+			sparkreport.config().setTheme(Theme.STANDARD);
+		
+		}
+		@Parameters("browser")
+		@BeforeClass
+		public void setup(@Optional("chrome") String str)
+		{
+			if(str.equals("chrome"))
+			{
+			System.setProperty("webdriver.chrome.driver", "F:/Testing Notes/Software/Chrome driver/chromedriver.exe");
+			driver= new ChromeDriver();
+			}
+			else if(str.equals("edge"))
+			{
+			System.setProperty("webdriver.edge.driver", "F:/Testing Notes/Software/Edge Driver/msedgedriver.exe");
+			driver= new EdgeDriver();
+			}
+			else if(str.equals("ie"))
+			{
+			System.setProperty("webdriver.ie.driver", "F:/Testing Notes/Software/IE Driver/IEDriverServer.exe");
+			driver= new InternetExplorerDriver();
+			}
+			else if(str.equals("firefox"))
+			{
+			System.setProperty("webdriver.gecko.driver", "F:/Testing Notes/Software/Firefox Driver/geckodriver.exe");
+			driver= new FirefoxDriver();
+			}
+		}
+		
+		@AfterClass
+		public void closeBrowser()
+		{
+			driver.quit();
+		}
+		@AfterSuite
+		public void endReport()
+		{
+			extent.flush();
+		}
+		public static String captureScreenshot() throws IOException
+		{
+			
+			String a=BaseClass.date();
+			File source = ((TakesScreenshot)driver).getScreenshotAs(OutputType.FILE);
+		
+			String currentDir = System.getProperty("user.dir");
+//			File dest = new File("C:/Users/Parmeshwar/eclipse-workspace/BankProject/Snaps/screenshot"+a+".png");
+			String destination = currentDir + "/Screenshots/"+ a +".jpg";
+			FileUtils.copyFile(source, new File(destination));
+			return destination;
+			
+		}
+		public static String date()
+		{
+		DateTimeFormatter df= DateTimeFormatter.ofPattern("yyyy_mm_dd hh mm ss");//formatt
+		LocalDateTime now = LocalDateTime.now();//currunt date and time
+		String d = df.format(now);
+		return d;
+	
+		}
 }
 
+import io.github.bonigarcia.wdm.WebDriverManager;
+import org.openqa.selenium.WebDriver;
 
-UPDATE project_details
-SET
-    status = 'Build',
-    implementation_dates = DATE '2026-01-14',
-    start_date = DATE '2025-12-01',
-    end_date = DATE '2026-02-28'
-WHERE for_team = 'COLLECTIONS'
-  AND project_name = '2026-C&R LettersChange'
-  AND clarity_id = '02022/PRJ71790';
-
-
-
-UPDATE project_details c
-SET
-    status = ca.status,
-    implementation_dates = ca.implementation_dates,
-    start_date = ca.start_date,
-    end_date = ca.end_date
-FROM project_details ca
-WHERE ca.for_team = 'CARDS'
-  AND c.for_team = 'COLLECTIONS'
-  AND c.project_name = ca.project_name
-  AND c.clarity_id = ca.clarity_id;
-
-
-{
-  "projectName": "2026-C&R LettersChange",
-  "forTeam": "COLLECTIONS",
-  "bpid": "2103485",
-  "clarityId": "02022/PRJ71790",
-  "execYear": 9999,
-  "startDate": "2025-12-01",
-  "endDate": "2026-02-28",
-  "implementationDates": ["2026-01-14"],
-  "projectManager": "Stephen Chan",
-  "developmentManager": "Ekta Bansal",
-  "estimate": 4.5,
-  "type": "Regulatory",
-  "customerGrouping": "Wholesale-CMB",
-  "overallRag": "On Target (Green 1) - G1",
-  "teamRag": "On Target (Green 1) - G1",
-  "status": "Build",
-  "payImpact": "No",
-  "description": "Changes in letter templates",
-  "krestalCheck": "Not Applicable",
-  "fundingStatus": "Approved",
-  "engagementId": "UKCBE-388",
-  "projectCategory": "DISCIPLINE ADDED",
-  "identifier": "AUTO"
-}
-
-
-public List<ProjectDetails> getProjectsFullViewByYear(Integer year) {
-    List<String> readList = accessResolver.readAccessList();
-
-    LocalDate start = LocalDate.of(year - 1, 12, 1);
-    LocalDate end   = LocalDate.of(year, 11, 30);
-
-    return projectDetailsRepository.getProjectFullView(
-            readList,
-            Date.valueOf(start),
-            Date.valueOf(end)
-    );
-}
-
-
-@Query(value =
-"SELECT * FROM project_details " +
-"WHERE TRIM(for_team) LIKE '%SVS' " +
-"AND for_team IN ?1 " +
-"AND ( " +
-" (start_date >= ?2 AND start_date <= ?3) OR " +
-" (end_date   >= ?2 AND end_date   <= ?3) OR " +
-" (start_date <  ?2 AND end_date   >  ?3) " +
-") " +
-"ORDER BY for_team, project_name",
-nativeQuery = true)
-List<ProjectDetails> getProjectFullView(
-        List<String> teams,
-        Date startRange,
-        Date endRange
-);
-
-
-@RequestMapping(value = "/getProjects", method = RequestMethod.GET)
-public JSONObject getProjectsbyyear(
-        @RequestParam(required = false) Integer year,
-        @RequestParam(required = false) String status,
-        @RequestParam(required = false) String reportType) {
-
-    System.out.println("Inside getProjects CONTROLLER");
-
-    JSONObject json = new JSONObject();
-    JSONArray array = new JSONArray();
-
-    List<ProjectDetails> projectList;
-
-    if ("projectFullView".equals(reportType) && year != null) {
-        System.out.println("INSIDE PROJECT FULL VIEW");
-        projectList = projectDao.getProjectsFullView(year);
-
-    } else if (year != null) {
-        System.out.println("INSIDE YEAR BASED PROJECTS");
-        projectList = projectDao.getProjectsbyyear(year);
-
-    } else if (status != null) {
-        System.out.println("INSIDE STATUS BASED PROJECTS");
-        projectList = projectDao.getProjects(status);
-
-    } else {
-        System.out.println("INSIDE ALL PROJECTS");
-        projectList = projectDao.getProjects();
+public class Login {
+    public static void main(String[] args) {
+        
+        WebDriver driver;
+        driver = WebDriverManager.chromedriver().create();
+        
+        driver.get("https://demo.guru99.com/v3/index.php");
+        driver.close();
     }
-
-    for (ProjectDetails r : projectList) {
-        array.add(r);
-    }
-
-    json.put("data", array);
-    return json;
 }
+<dependency>
+    <groupId>io.github.bonigarcia</groupId>
+    <artifactId>webdrivermanager</artifactId>
+    <version>6.3.3</version>
+    <scope>compile</scope>
+</dependency>
 
 
-// ProjectDao
-public List<ProjectDetails> getProjectsFullView(Integer year) {
-
-    List<String> readList = accessResolver.readAccessList();
-
-    Integer previousYear = year - 1;
-
-    String startRange = previousYear + "-12-01";
-    String endRange   = year + "-11-30";
-
-    Date startDate = null;
-    Date endDate = null;
-
-    try {
-        startDate = new SimpleDateFormat("yyyy-MM-dd").parse(startRange);
-        endDate   = new SimpleDateFormat("yyyy-MM-dd").parse(endRange);
-    } catch (ParseException e) {
-        e.printStackTrace();
-    }
-
-    return projectDetailsRepository.getProjectsFullView(
-            readList,
-            startDate,
-            endDate
-    );
-}
-
-
-// ProjectDetailsRepository
-@Query(value = """
-    SELECT *
-    FROM project_details
-    WHERE for_team IN (:teams)
-      AND start_date <= :endDate
-      AND end_date   >= :startDate
-    ORDER BY project_name, for_team
-""", nativeQuery = true)
-List<ProjectDetails> getProjectsFullView(
-        @Param("teams") List<String> teams,
-        @Param("startDate") Date startDate,
-        @Param("endDate") Date endDate
-);
-{REGEX[{B[Details]}][Final repayment date\s([0-9]{1,2}[A-Za-z]{3}[0-9]{4})]}
